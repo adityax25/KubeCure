@@ -1,4 +1,4 @@
-# KubeCure
+# <img src="https://raw.githubusercontent.com/kubernetes/kubernetes/master/logo/logo.png" alt="Kubernetes" width="22"/> KubeCure
 
 **An AI-Native Autonomous Kubernetes Self-Healing Engine**
 
@@ -38,6 +38,34 @@ KubeCure acts as an **intelligent intermediary** between your failing workloads 
    |     Pod      |          |  Repository  |
    +--------------+          +--------------+
 ```
+
+---
+
+## Scope & Design Philosophy
+
+### Cluster-Wide Watching, Pod-Scoped Diagnosis
+
+KubeCure watches the **entire cluster** for pod failures via Kubernetes informers, but diagnoses failures at the **single-pod level** by aggregating context from that pod's logs, events, and manifests.
+
+### The Domino Effect Problem
+
+A key challenge in Kubernetes diagnosis: *how does the LLM know if the issue is this container, or a cascading failure from another pod?*
+
+Consider this scenario:
+1. A Redis pod OOMs and dies
+2. An API pod fails readiness probes (can't reach Redis)
+3. A frontend pod crashes with connection errors (can't reach API)
+
+With only frontend pod context, an LLM might suggest "increase timeout", completely missing that **Redis is the root cause**.
+
+### Phased Approach
+
+| Phase | Scope | Focus |
+|-------|-------|-------|
+| **V1 (POC)** | Intra-pod | Single-pod failures with clear error signals (`CrashLoopBackOff`, `OOMKilled`, `ImagePullBackOff`, config errors) |
+| **V2** | Inter-pod | Cluster-aware diagnosis with dependency graphs for cascading failures |
+
+V1 targets failures where all diagnostic information lives within the pod's scope, these are self-contained and demonstrable. V2 will extend to multi-pod correlation where understanding service dependencies becomes essential.
 
 ---
 
@@ -121,4 +149,4 @@ kubecure/
 
 ## Status
 
-This project is under active development. Documentation will be expanded as components are implemented.
+This project is under active development. V1 focuses on single-pod (intra-pod) failures with clear error signals. Multi-pod (inter-pod) correlation and cluster-aware diagnosis are planned for V2.
