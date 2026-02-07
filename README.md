@@ -1,6 +1,6 @@
 # <img src="https://raw.githubusercontent.com/kubernetes/kubernetes/master/logo/logo.png" alt="Kubernetes" width="22"/> KubeCure
 
-**An AI-Native Autonomous Kubernetes Self-Healing Engine**
+**An AI-native, autonomic self-healing engine for Kubernetes.**
 
 ## What is KubeCure?
 
