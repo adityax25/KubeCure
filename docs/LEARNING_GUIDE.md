@@ -1,25 +1,27 @@
 # KubeCure Learning Guide
 
-[← Back to README](../README.md)
+[Back to README](../README.md)
 
 > A comprehensive guide for understanding the technologies, patterns, and tradeoffs in building an AI-native Kubernetes self-healing operator.
 
-This guide is designed for someone with a strong CS foundation (MS-level) who is new to the cloud-native ecosystem. Each section provides both **technical depth** and **intuitive explanations**.
+This guide is designed for someone with a strong CS foundation who is new to the cloud-native ecosystem. Each section provides both **technical depth** and **intuitive explanations**.
 
 ---
 
 ## Table of Contents
 
 1. [Kubernetes Fundamentals](#1-kubernetes-fundamentals)
-2. [Local Kubernetes Options Compared](#2-local-kubernetes-options-compared)
-3. [Go for Cloud-Native Development](#3-go-for-cloud-native-development)
-4. [Kubernetes Operators & Controllers](#4-kubernetes-operators--controllers)
-5. [Operator SDK & Controller Runtime](#5-operator-sdk--controller-runtime)
-6. [LLM Integration Patterns](#6-llm-integration-patterns)
-7. [GitOps Principles](#7-gitops-principles)
-8. [Terraform & Infrastructure as Code](#8-terraform--infrastructure-as-code)
-9. [Observability Stack](#9-observability-stack)
-10. [Frontend Architecture](#10-frontend-architecture)
+2. [Kubernetes Architecture Deep Dive](#2-kubernetes-architecture-deep-dive)
+3. [Local Kubernetes Options Compared](#3-local-kubernetes-options-compared)
+4. [Go for Cloud-Native Development](#4-go-for-cloud-native-development)
+5. [Kubernetes Operators and Controllers](#5-kubernetes-operators-and-controllers)
+6. [Operator SDK and Controller Runtime](#6-operator-sdk-and-controller-runtime)
+7. [Failure Detection Implementation](#7-failure-detection-implementation)
+8. [LLM Integration Patterns](#8-llm-integration-patterns)
+9. [GitOps Principles](#9-gitops-principles)
+10. [Terraform and Infrastructure as Code](#10-terraform-and-infrastructure-as-code)
+11. [Observability Stack](#11-observability-stack)
+12. [Frontend Architecture](#12-frontend-architecture)
 
 ---
 
@@ -46,17 +48,17 @@ This guide is designed for someone with a strong CS foundation (MS-level) who is
 Kubernetes is built on **declarative, eventual consistency**:
 
 ```
-                    ┌────────────────────────────────┐
-                    │                                │
-                    ▼                                │
-              ┌──────────┐     ┌──────────┐    ┌──────────┐
-              │ Desired  │     │  Actual  │    │   Take   │
-              │  State   │────▶│  State   │───▶│  Action  │
-              │ (YAML)   │     │ (Cluster)│    │          │
-              └──────────┘     └──────────┘    └──────────┘
-                    │                                │
-                    │         Reconcile              │
-                    └────────────────────────────────┘
+                    +---------------------------------+
+                    |                                 |
+                    v                                 |
+              +----------+     +----------+    +----------+
+              | Desired  |     |  Actual  |    |   Take   |
+              |  State   |---->|  State   |--->|  Action  |
+              |  (YAML)  |     | (Cluster)|    |          |
+              +----------+     +----------+    +----------+
+                    |                                 |
+                    |         Reconcile               |
+                    +---------------------------------+
 ```
 
 **Technical**: Controllers continuously reconcile desired state (stored in etcd via the API server) with actual state (observed from the cluster). This is an **asynchronous, level-triggered** control loop.
@@ -69,7 +71,102 @@ KubeCure is itself a controller. It watches for Pods in failure states and recon
 
 ---
 
-## 2. Local Kubernetes Options Compared
+## 2. Kubernetes Architecture Deep Dive
+
+### Cluster Structure
+
+A Kubernetes cluster consists of:
+
+```
++----------------------------------------------------------------------+
+|                        KUBERNETES CLUSTER                            |
+|                                                                      |
+|  +----------------------------------------------------------------+  |
+|  |                     CONTROL PLANE NODE                         |  |
+|  |                                                                |  |
+|  |   +----------------+   +----------------+   +----------------+ |  |
+|  |   |   API SERVER   |   |   SCHEDULER    |   |   CONTROLLER   | |  |
+|  |   |                |   |                |   |    MANAGER     | |  |
+|  |   |  REST API for  |   | Decides which  |   | Built-in       | |  |
+|  |   |  all k8s ops   |   | node runs pod  |   | controllers    | |  |
+|  |   +-------+--------+   +----------------+   +----------------+ |  |
+|  |           |                                                    |  |
+|  |           | reads/writes                                       |  |
+|  |           v                                                    |  |
+|  |   +----------------+                                           |  |
+|  |   |     etcd       |                                           |  |
+|  |   |   (database)   |                                           |  |
+|  |   +----------------+                                           |  |
+|  +----------------------------------------------------------------+  |
+|                                                                      |
+|  +------------------------+  +------------------------+              |
+|  |      WORKER NODE 1     |  |      WORKER NODE 2     |              |
+|  |  +-------+  +-------+  |  |  +-------+  +-------+  |              |
+|  |  | Pod A |  | Pod B |  |  |  | Pod C |  | Pod D |  |              |
+|  |  +-------+  +-------+  |  |  +-------+  +-------+  |              |
+|  |       kubelet          |  |       kubelet          |              |
+|  +------------------------+  +------------------------+              |
++----------------------------------------------------------------------+
+```
+
+### Control Plane Components
+
+| Component | What It Does |
+|-----------|--------------|
+| **API Server** | Central REST API. All operations go through here. The ONLY component that talks to etcd. |
+| **etcd** | Distributed key-value store. Stores ALL cluster state (pods, services, secrets). |
+| **Scheduler** | Watches for new pods without assigned nodes, selects nodes for them. |
+| **Controller Manager** | Runs built-in controllers (Deployment, ReplicaSet, Node, etc.). |
+
+### What is etcd?
+
+**Full form**: Pronounced "et-see-dee" — comes from the Unix `/etc` directory + "d" for distributed.
+
+| Aspect | Description |
+|--------|-------------|
+| **What** | Distributed key-value database |
+| **Purpose** | Stores ALL cluster state (pods, services, secrets, configs) |
+| **Who uses it** | Only the API Server (not you, not KubeCure directly) |
+| **How it works** | Like a giant JSON store: `key: "/pods/default/nginx" -> {pod yaml}` |
+
+**Analogy**: etcd is the **filing cabinet** of Kubernetes. The API Server is the **receptionist** who manages access to it. You never open the filing cabinet yourself—you ask the receptionist.
+
+### How KubeCure Communicates
+
+KubeCure **never talks to Pods directly**. Everything goes through the API Server:
+
+```
++-----------------------------------------------------------------------+
+|                                                                       |
+|    KubeCure                                                           |
+|        |                                                              |
+|        | HTTP REST calls (via controller-runtime client)              |
+|        v                                                              |
+|   +-----------+      +-----------+                                    |
+|   | API SERVER|<---->|    etcd   |                                    |
+|   |           |      |  (storage)|                                    |
+|   +-----+-----+      +-----------+                                    |
+|         |                                                             |
+|         | (API Server queries nodes)                                  |
+|         v                                                             |
+|   +--------------+--------------+--------------+                      |
+|   |    Node 1    |    Node 2    |    Node 3    |                      |
+|   |  +-------+   |  +-------+   |  +-------+   |                      |
+|   |  | Pod A |   |  | Pod C |   |  | Pod E |   |                      |
+|   |  | Pod B |   |  | Pod D |   |  | Pod F |   |                      |
+|   |  +-------+   |  +-------+   |  +-------+   |                      |
+|   +--------------+--------------+--------------+                      |
+|                                                                       |
++-----------------------------------------------------------------------+
+```
+
+### Cluster-Wide Watching
+
+When a controller watches resources, it watches the **entire cluster**, not a single node. The API Server has a global view of all pods across all nodes.
+
+---
+
+## 3. Local Kubernetes Options Compared
 
 For development, you need a local Kubernetes cluster. Here are your options:
 
@@ -81,52 +178,47 @@ For development, you need a local Kubernetes cluster. Here are your options:
 | **How It Works** | Runs k8s nodes as Docker containers | Runs k8s in a VM or container | Runs as a single binary (stripped-down k8s) | VM-based, integrated with Docker |
 | **Startup Time** | ~30 seconds | ~2-3 minutes | ~30 seconds | ~1-2 minutes |
 | **Resource Usage** | Low (~500MB) | Medium (~2GB) | Very Low (~300MB) | Medium (~2GB) |
-| **Multi-node** | ✅ Easy | ⚠️ Possible but complex | ✅ Easy | ❌ Single node only |
+| **Multi-node** | Easy | Possible but complex | Easy | Single node only |
 | **Production Parity** | High (full k8s) | High (full k8s) | Medium (some features removed) | High (full k8s) |
 | **Best For** | CI/testing, operator dev | Local dev with add-ons | Edge/IoT, resource-constrained | Docker users who want simplicity |
 
 ### Deep Dive: kind (Kubernetes in Docker)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Docker Host                         │
-│  ┌─────────────────┐  ┌─────────────────┐               │
-│  │  kind-control-  │  │  kind-worker    │               │
-│  │plane (container)│  │  (container)    │               │
-│  │  ┌───────────┐  │  │  ┌───────────┐  │               │
-│  │  │ kubelet   │  │  │  │ kubelet   │  │               │
-│  │  │ API server│  │  │  │ Your Pods │  │               │
-│  │  │ etcd      │  │  │  └───────────┘  │               │
-│  │  │ scheduler │  │  └─────────────────┘               │
-│  │  └───────────┘  │                                    │
-│  └─────────────────┘                                    │
-└─────────────────────────────────────────────────────────┘
++-----------------------------------------------------------+
+|                     Docker Host                           |
+|  +---------------------+  +---------------------+         |
+|  |  kind-control-      |  |  kind-worker        |         |
+|  |  plane (container)  |  |  (container)        |         |
+|  |  +--------------+   |  |  +--------------+   |         |
+|  |  | kubelet      |   |  |  | kubelet      |   |         |
+|  |  | API server   |   |  |  | Your Pods    |   |         |
+|  |  | etcd         |   |  |  +--------------+   |         |
+|  |  | scheduler    |   |  +---------------------+         |
+|  |  +--------------+   |                                  |
+|  +---------------------+                                  |
++-----------------------------------------------------------+
 ```
 
 **Technical**: kind uses `containerd` inside Docker containers to run Kubernetes nodes. It's literally Kubernetes running inside containers, which are running on your host's Docker daemon.
 
 **Intuitive**: Imagine Russian nesting dolls. Your laptop runs Docker. Docker runs containers that *pretend* to be servers. Those fake servers run Kubernetes. Kubernetes runs your actual application containers.
 
-### Deep Dive: k3s
+### kind Naming Conventions
 
-**What's different about k3s?**
+When you create a cluster with `kind create cluster --name kubecure-dev`:
 
-k3s is a stripped-down Kubernetes distribution by Rancher:
-- Replaces `etcd` with SQLite (or Postgres/MySQL)
-- Removes legacy/alpha features
-- Single binary (~60MB)
-- Bundles containerd
+| Name | What It Is |
+|------|-----------|
+| `kubecure-dev` | **Cluster name** (what you passed to `--name`) |
+| `kubecure-dev-control-plane` | **Docker container name** (kind auto-generated: `{cluster}-control-plane`) |
+| `kind-kubecure-dev` | **kubectl context name** (kind auto-generated: `kind-{cluster}`) |
 
-**Technical Tradeoff**: k3s sacrifices some features (cloud provider integrations, in-tree storage drivers) for simplicity. It's compliant with the Kubernetes API but not a full distribution.
+**Single-node cluster**: In a single-node kind cluster, the control plane container IS the entire cluster. It runs both control plane components AND your workloads.
 
-**When to use k3s over kind**:
-- You're resource-constrained (old laptop, Raspberry Pi)
-- You want to test edge deployment scenarios
-- You need a persistent cluster that survives reboots easily
+### Our Choice: kind
 
-### Our Choice: **kind**
-
-For KubeCure development, I recommend **kind** because:
+For KubeCure development, we use **kind** because:
 
 1. **Full k8s parity** — No surprises when deploying to EKS later
 2. **Multi-node support** — Can test node failures
@@ -136,7 +228,7 @@ For KubeCure development, I recommend **kind** because:
 
 ---
 
-## 3. Go for Cloud-Native Development
+## 4. Go for Cloud-Native Development
 
 ### Why Go?
 
@@ -168,40 +260,27 @@ If you're building for the cloud-native ecosystem, Go is the path of least resis
 
 The Kubernetes Go client libraries (`client-go`, `controller-runtime`) are first-class citizens. Python/JS clients exist but are wrappers with less documentation and community support.
 
-```go
-// Example: Watching Pods in Go
-informer := cache.NewSharedInformer(
-    &cache.ListWatch{
-        ListFunc:  func(opts metav1.ListOptions) (runtime.Object, error) { ... },
-        WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) { ... },
-    },
-    &corev1.Pod{},
-    0,
-)
-```
-
 ### Go Module Structure
 
 ```
 kubecure/
-├── go.mod              # Dependency manifest (like package.json)
-├── go.sum              # Dependency lock file
-├── cmd/                # Entrypoints (main packages)
-│   └── operator/
-│       └── main.go
-├── internal/           # Private code (can't be imported externally)
-│   ├── controller/
-│   ├── detector/
-│   └── ai/
-└── pkg/                # Public code (can be imported)
-    └── apis/
++-- go.mod              # Dependency manifest (like package.json)
++-- go.sum              # Dependency lock file
++-- cmd/                # Entrypoints (main packages)
+|   +-- main.go
++-- internal/           # Private code (can't be imported externally)
+|   +-- controller/
+|   +-- detector/
+|   +-- ai/
++-- pkg/                # Public code (can be imported)
+    +-- apis/
 ```
 
 **Why `internal/`?** — Go enforces that packages under `internal/` cannot be imported by code outside the module. This is a **compile-time guarantee** of encapsulation.
 
 ---
 
-## 4. Kubernetes Operators & Controllers
+## 5. Kubernetes Operators and Controllers
 
 ### What is a Controller?
 
@@ -215,29 +294,75 @@ kubecure/
 
 **Intuitive**: A Controller is the thermostat logic. An Operator is a smart home system that knows about heating, cooling, humidity, AND knows that when you leave for vacation, it should lower the temp.
 
-### The Operator Pattern
+### Manager vs Controller vs Operator
+
+Think of them as a hierarchy:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    Kubernetes API Server                     │
-└──────────────────────────────────────────────────────────────┘
-        │                                        ▲
-        │ Watch (Informer)                       │ Update
-        ▼                                        │
-┌──────────────────────────────────────────────────────────────┐
-│                     Your Operator                            │
-│  ┌─────────────┐    ┌──────────────┐    ┌────────────────┐   │
-│  │   Informer  │───▶│  Work Queue  │───▶│  Reconciler    │   │
-│  │   (cache)   │    │              │    │  (your logic)  │   │
-│  └─────────────┘    └──────────────┘    └────────────────┘   │
-└──────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------+
+|                      OPERATOR                             |
+|  (The whole project - KubeCure)                           |
+|                                                           |
+|  +-----------------------------------------------------+  |
+|  |                    MANAGER                          |  |
+|  |  (The runtime that orchestrates everything)         |  |
+|  |                                                     |  |
+|  |  +--------------+  +---------------+                |  |
+|  |  | Controller 1 |  | Controller 2  |  ...           |  |
+|  |  | (Pod watcher)|  |(Event watcher)|                |  |
+|  |  +--------------+  +---------------+                |  |
+|  |                                                     |  |
+|  +-----------------------------------------------------+  |
++-----------------------------------------------------------+
 ```
 
-**Key Components:**
+| Term | What It Is | Scope |
+|------|-----------|-------|
+| **Controller** | One reconciliation loop for one resource type | Single responsibility |
+| **Manager** | Runtime that hosts controllers + shared infra | Process-level orchestrator |
+| **Operator** | Complete system (binary + manifests + CRDs) | The deployable product |
 
-1. **Informer**: Maintains a local cache of resources, watches for changes
-2. **Work Queue**: Buffers and deduplicates events (rate limiting, retries)
-3. **Reconciler**: Your business logic. Given a key (namespace/name), reconcile state.
+### The Manager
+
+The Manager provides shared infrastructure:
+- Kubernetes client (for API calls)
+- Shared cache (so controllers don't each query the API)
+- Leader election (for HA)
+- Health probes
+- Metrics server
+
+### High Availability (HA) and Leader Election
+
+**The Problem**: If you run just one operator pod and it dies, nobody is watching your cluster.
+
+**The Solution — Leader Election**:
+
+```
++-----------------------------------------------------------+
+|                    Kubernetes Cluster                     |
+|                                                           |
+|  +--------------+  +--------------+  +--------------+     |
+|  |  KubeCure    |  |  KubeCure    |  |  KubeCure    |     |
+|  |  Replica 1   |  |  Replica 2   |  |  Replica 3   |     |
+|  |              |  |              |  |              |     |
+|  |  LEADER      |  |  (standby)   |  |  (standby)   |     |
+|  |  (active)    |  |              |  |              |     |
+|  +--------------+  +--------------+  +--------------+     |
+|         |                                                 |
+|         | does all the work                               |
+|         v                                                 |
+|  +--------------------------------------------------+     |
+|  |              Kubernetes API Server               |     |
+|  +--------------------------------------------------+     |
++-----------------------------------------------------------+
+```
+
+**How it works**:
+1. All replicas try to acquire a "lease" (lock) in Kubernetes
+2. Only ONE wins and becomes the **leader**
+3. The leader does all the actual work
+4. Others watch and wait
+5. If leader dies, another replica instantly takes over
 
 ### Reconciliation: Level-Triggered vs Edge-Triggered
 
@@ -268,7 +393,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 ---
 
-## 5. Operator SDK & Controller Runtime
+## 6. Operator SDK and Controller Runtime
 
 ### What is `controller-runtime`?
 
@@ -292,27 +417,109 @@ A toolkit by Red Hat that wraps `controller-runtime` with:
 
 ```bash
 # Scaffold a new operator
-operator-sdk init --domain kubecure.io --repo github.com/adityax25/kubecure
+operator-sdk init --domain kubecure.io --repo github.com/adityax25/KubeCure
 
-# Create a new API (CRD)
-operator-sdk create api --group healing --version v1alpha1 --kind HealingPolicy
+# Create a new controller for an existing resource
+operator-sdk create api --group core --version v1 --kind Pod --controller=true --resource=false
 ```
 
-### The Tradeoff: Operator SDK vs Raw controller-runtime
+### Generated Project Structure
 
-| Aspect | Operator SDK | Raw controller-runtime |
-|--------|--------------|------------------------|
-| **Learning curve** | Lower (guided scaffolding) | Steeper (more manual setup) |
-| **Flexibility** | Opinionated structure | Full control |
-| **Boilerplate** | Less | More |
-| **Updates** | Lag behind controller-runtime | Latest features immediately |
-| **Use when** | Starting out, standard patterns | Custom layouts, minimal deps |
+After running `operator-sdk init`, you get:
 
-**For KubeCure**: We'll use **Operator SDK** for scaffolding, but understand the underlying `controller-runtime` patterns so you're not boxed in.
+```
+kubecure/
++-- cmd/main.go           # Entrypoint (starts Manager)
++-- config/               # K8s manifests to deploy the operator
++-- internal/controller/  # Your controller code
++-- go.mod, go.sum        # Go dependencies
++-- Makefile              # Build commands
++-- Dockerfile            # Container recipe
++-- bin/manager           # Compiled binary (not in git)
++-- .github/workflows/    # CI/CD pipelines
+```
+
+### The cmd/main.go File
+
+This is the entrypoint that:
+1. Initializes the Scheme (teaches Go about Kubernetes types)
+2. Creates the Manager
+3. Registers controllers with the Manager
+4. Starts the Manager
+
+Key sections:
+- **Scheme**: Registers Kubernetes types so Go can serialize/deserialize them
+- **Manager creation**: Sets up client, cache, leader election, metrics
+- **Controller registration**: Wires your controllers into the Manager
+- **Health checks**: `/healthz` and `/readyz` endpoints
 
 ---
 
-## 6. LLM Integration Patterns
+## 7. Failure Detection Implementation
+
+### Pod Failure Types
+
+KubeCure detects these failure states:
+
+| Failure Type | Description | When It Triggers |
+|--------------|-------------|------------------|
+| `CrashLoopBackOff` | Container keeps crashing | App crashes on startup, runtime errors |
+| `ImagePullBackOff` | Can't pull container image | Typo in image name, private registry auth |
+| `OOMKilled` | Out of memory | Memory limit too low for application |
+| `CreateContainerConfigError` | Bad container config | Missing Secret or ConfigMap |
+| `RunContainerError` | Runtime failure | Bad entrypoint, permissions issue |
+| `Evicted` | Node resource pressure | Disk or memory pressure on node |
+| `Error` | Generic container error | Container exited with non-zero code |
+| `Unknown` | Catch-all | Any other unrecognized failure |
+
+### Where Failures Appear in Pod Status
+
+Failures can appear in different places in the Pod status:
+
+| Location | Accessed Via | Failure Types Found |
+|----------|-------------|---------------------|
+| Container Waiting State | `pod.Status.ContainerStatuses[].State.Waiting.Reason` | CrashLoopBackOff, ImagePullBackOff, CreateContainerConfigError |
+| Container Terminated State | `pod.Status.ContainerStatuses[].State.Terminated.Reason` | OOMKilled, Error |
+| Pod Reason | `pod.Status.Reason` | Evicted |
+| Pod Phase | `pod.Status.Phase` | Failed |
+
+### The Detection Flow
+
+When a pod changes:
+
+```
+1. Pod crashes on some node
+         |
+         v
+2. kubelet on node reports to API Server
+         |
+         v
+3. API Server updates etcd: "Pod status = CrashLoopBackOff"
+         |
+         v
+4. KubeCure's informer (watching via API Server) gets notified
+         |
+         v
+5. Reconcile() is called with that Pod's name/namespace
+         |
+         v
+6. KubeCure reads Pod details, calls detectFailure()
+         |
+         v
+7. If failure found, log it (future: send to AI, create PR)
+```
+
+### Skipping System Namespaces
+
+We skip pods in system namespaces to avoid noise:
+- `kube-system` — Core Kubernetes components
+- `kube-public` — Public cluster info
+- `kube-node-lease` — Node heartbeats
+- `local-path-storage` — kind-specific storage provisioner
+
+---
+
+## 8. LLM Integration Patterns
 
 ### Why Gemini?
 
@@ -381,7 +588,7 @@ type OpenAIEngine struct {
 
 ---
 
-## 7. GitOps Principles
+## 9. GitOps Principles
 
 ### What is GitOps?
 
@@ -393,13 +600,13 @@ type OpenAIEngine struct {
 
 ```
 Developer       GitHub          ArgoCD/Flux       Kubernetes
-    │              │                 │                │
-    │──(1) Push───▶│                 │                │
-    │              │◀──(2) Detect────│                │
-    │              │     change      │                │
-    │              │                 │──(3) Sync─────▶│
-    │              │                 │                │
-    │◀───────────────── (4) Deployed ─────────────────┘
+    |              |                 |                |
+    |--(1) Push--->|                 |                |
+    |              |<--(2) Detect----|                |
+    |              |     change      |                |
+    |              |                 |--(3) Sync----->|
+    |              |                 |                |
+    |<------------------ (4) Deployed ----------------+
 ```
 
 ### KubeCure's Role in GitOps
@@ -412,17 +619,15 @@ KubeCure is **not** a GitOps operator (like ArgoCD). Instead, it:
 
 This maintains the GitOps principle: **Git is the source of truth**, not the cluster.
 
-```
-KubeCure Action          │  GitOps Compliance
-─────────────────────────┼─────────────────────────────
-Create PR with fix       │  ✅ Change goes through Git
-Auto-apply to cluster    │  ❌ Bypasses Git (anti-pattern)
-Create Issue for review  │  ✅ Human in the loop
-```
+| KubeCure Action | GitOps Compliance |
+|-----------------|-------------------|
+| Create PR with fix | Change goes through Git |
+| Auto-apply to cluster | Bypasses Git (anti-pattern) |
+| Create Issue for review | Human in the loop |
 
 ---
 
-## 8. Terraform & Infrastructure as Code
+## 10. Terraform and Infrastructure as Code
 
 ### What is Terraform?
 
@@ -450,45 +655,34 @@ Terraform makes it:
 2. Reviewable via PR
 3. Idempotent (run 100 times, same result)
 
-### Terraform vs Other IaC Tools
-
-| Tool | Language | Cloud Support | State Management |
-|------|----------|---------------|------------------|
-| **Terraform** | HCL (declarative) | Multi-cloud | Remote state (S3, etc.) |
-| **Pulumi** | TypeScript/Python/Go | Multi-cloud | Pulumi Cloud |
-| **CloudFormation** | YAML/JSON | AWS only | AWS-managed |
-| **CDK** | TypeScript/Python | AWS primarily | Synthesizes to CFN |
-
-**For KubeCure**: Terraform is the industry standard for multi-cloud IaC. Even if you're AWS-only now, the skills transfer.
-
 ### Hybrid Approach: Local + Cloud
 
 | Phase | Environment | Tool | Purpose |
 |-------|-------------|------|---------|
-| Development | Local | `kind` | Fast iteration, no cost |
+| Development | Local | kind | Fast iteration, no cost |
 | Staging/Demo | AWS | Terraform + EKS | Real cloud behavior |
-| CI Tests | GitHub Actions | `kind` | Automated testing |
+| CI Tests | GitHub Actions | kind | Automated testing |
 
 ---
 
-## 9. Observability Stack
+## 11. Observability Stack
 
 ### The Three Pillars
 
 | Pillar | What It Captures | Tool |
 |--------|------------------|------|
 | **Metrics** | Numeric time-series data (counters, gauges, histograms) | Prometheus |
-| **Logs** | Discrete events with context | stdout → Loki or CloudWatch |
+| **Logs** | Discrete events with context | stdout, Loki, or CloudWatch |
 | **Traces** | Request flow across services | Jaeger, OpenTelemetry |
 
 ### Prometheus + Grafana for KubeCure
 
 ```
-┌────────────┐        ┌────────────┐        ┌────────────┐
-│  KubeCure  │───────▶│ Prometheus │◀──────▶│  Grafana   │
-│ (exposes   │ scrape │ (stores    │ query  │(visualize) │
-│  /metrics) │        │  metrics)  │        │            │
-└────────────┘        └────────────┘        └────────────┘
++------------+        +------------+        +------------+
+|  KubeCure  |------->| Prometheus |<------>|  Grafana   |
+| (exposes   | scrape | (stores    | query  |(visualize) |
+|  /metrics) |        |  metrics)  |        |            |
++------------+        +------------+        +------------+
 ```
 
 **Metrics we'll expose:**
@@ -502,21 +696,13 @@ var (
         },
         []string{"namespace", "failure_type"},
     )
-    
-    remediationConfidence = prometheus.NewHistogram(
-        prometheus.HistogramOpts{
-            Name:    "kubecure_remediation_confidence",
-            Help:    "Confidence scores from LLM diagnoses",
-            Buckets: []float64{0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
-        },
-    )
 )
 ```
 
 ### Structured Logging
 
 Instead of:
-```
+```go
 log.Println("pod failed")
 ```
 
@@ -525,8 +711,8 @@ Use structured logging:
 logger.Info("pod failure detected",
     "pod", pod.Name,
     "namespace", pod.Namespace,
-    "phase", pod.Status.Phase,
-    "restartCount", pod.Status.ContainerStatuses[0].RestartCount,
+    "failureType", failure.FailureType,
+    "restartCount", cs.RestartCount,
 )
 ```
 
@@ -534,7 +720,7 @@ logger.Info("pod failure detected",
 
 ---
 
-## 10. Frontend Architecture
+## 12. Frontend Architecture
 
 ### Tech Stack
 
@@ -559,22 +745,35 @@ Options:
 2. **WebSockets** — Real-time streaming
 3. **Server-Sent Events (SSE)** — One-way streaming from server
 
-**For real-time failure feed, WebSockets or SSE preferred.**
+For real-time failure feed, WebSockets or SSE are preferred.
 
 ---
 
-## Quick Reference: Project Phases
+## Git Best Practices
 
-| Phase | Focus | What You'll Build |
-|-------|-------|-------------------|
-| 1 | Setup | Install Go, Docker, kind, kubectl |
-| 2 | Go Basics | Hello world, modules, project structure |
-| 3 | Operators | Scaffold with operator-sdk |
-| 4 | Watch Layer | Pod informers, failure detection |
-| 5 | Terraform (parallel) | EKS cluster definition |
-| 6 | Aggregation | Log/event/manifest collection |
-| 7 | AI Integration | Gemini API, prompt engineering |
-| 8 | GitOps | GitHub API for PRs/Issues |
-| 9 | Observability | Prometheus metrics, structured logs |
-| 10 | Frontend | React dashboard |
-| 11 | Integration | End-to-end testing on EKS |
+### Conventional Commits
+
+Format: `<type>(<scope>): <description>`
+
+| Type | When to Use |
+|------|-------------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `chore` | Maintenance (deps, configs) |
+| `refactor` | Code change without new feature/fix |
+| `test` | Adding tests |
+| `ci` | CI/CD changes |
+
+Example:
+```bash
+git commit -m "feat(controller): add failure detection for CrashLoopBackOff"
+```
+
+### What to Ignore (.gitignore)
+
+- `bin/` — Compiled binaries
+- `.env` — Secrets
+- `.DS_Store` — macOS junk
+- `*.test` — Test binaries
+- `cover.out` — Coverage reports

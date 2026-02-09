@@ -147,6 +147,73 @@ kubecure/
 
 ---
 
-## Status
+## Current Status
 
-This project is under active development. V1 focuses on single-pod (intra-pod) failures with clear error signals. Multi-pod (inter-pod) correlation and cluster-aware diagnosis are planned for V2.
+### Completed
+
+- **Environment Setup**: Go, kubectl, kind, operator-sdk, Terraform installed
+- **Project Scaffolding**: Operator structure generated with `operator-sdk init`
+- **Failure Detection**: Pod controller watching for 8 failure types:
+  - `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`
+  - `CreateContainerConfigError`, `RunContainerError`, `Evicted`
+  - `Error`, `Unknown`
+
+### In Progress
+
+- Context Aggregation (logs, events, manifests)
+
+### Upcoming
+
+- Gemini AI integration for diagnosis
+- GitHub PR/Issue creation
+- Prometheus metrics
+- React dashboard
+- Terraform EKS deployment
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.22+
+- Docker
+- kubectl
+- kind
+- operator-sdk
+
+### Local Development
+
+```bash
+# Create local Kubernetes cluster
+kind create cluster --name kubecure-dev
+
+# Run the operator locally
+make run
+```
+
+### Testing Failure Detection
+
+```bash
+# Create a pod with a bad image tag
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-pod
+  namespace: default
+spec:
+  containers:
+  - name: broken
+    image: nginx:doesnotexist
+EOF
+
+# Watch operator logs for failure detection
+# You should see: Pod failure detected pod=broken-pod failureType=ImagePullBackOff
+```
+
+---
+
+## Documentation
+
+See [docs/LEARNING_GUIDE.md](docs/LEARNING_GUIDE.md) for detailed explanations of all concepts, technologies, and design decisions.
