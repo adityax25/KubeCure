@@ -1,0 +1,390 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: diagnoses.healing.kubecure.io
+spec:
+  group: healing.kubecure.io
+  names:
+    kind: Diagnosis
+    listKind: DiagnosisList
+    plural: diagnoses
+    shortNames:
+    - diag
+    singular: diagnosis
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.target.name
+      name: Target
+      type: string
+    - jsonPath: .spec.failureType
+      name: Type
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.analysis.confidencePercent
+      name: Conf
+      type: integer
+    - jsonPath: .status.timeToDiagnosis
+      name: MTTD
+      type: string
+    - jsonPath: .status.timeToRecovery
+      name: MTTR
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Diagnosis is a single detected pod failure and the record of
+          how it was handled.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DiagnosisSpec records the observed facts of a single failure. It is written once when the failure
+              is detected and is never modified afterwards; all subsequent progress is recorded in the status.
+            properties:
+              container:
+                description: |-
+                  Container names the failing container within the pod. Empty for pod level failures such as
+                  eviction or unschedulability.
+                type: string
+              failureType:
+                description: FailureType is the classification assigned by the detector.
+                enum:
+                - CrashLoopBackOff
+                - OOMKilled
+                - ImagePullBackOff
+                - CreateContainerConfigError
+                - RunContainerError
+                - Unschedulable
+                - ProbeFailure
+                - Evicted
+                type: string
+              observedAt:
+                description: ObservedAt is when the detector first saw the failure.
+                format: date-time
+                type: string
+              policyRef:
+                description: |-
+                  PolicyRef names the HealingPolicy in this namespace that governs handling. Empty means no
+                  policy was found, in which case the diagnosis is recorded but no remediation is attempted.
+                type: string
+              signature:
+                description: |-
+                  Signature is a hash over namespace, owner, container, and failure type. Object names derive
+                  from it, so replicas failing identically collapse into a single diagnosis.
+                type: string
+              target:
+                description: Target is the pod that failed.
+                properties:
+                  name:
+                    description: Name is the pod name.
+                    type: string
+                  owner:
+                    description: |-
+                      Owner is the workload that manages the pod, and is where a fix is normally applied. Pods
+                      created directly have no owner.
+                    properties:
+                      kind:
+                        description: Kind is the owning workload kind, such as Deployment
+                          or StatefulSet.
+                        type: string
+                      name:
+                        description: Name is the owning workload name.
+                        type: string
+                    required:
+                    - kind
+                    - name
+                    type: object
+                  uid:
+                    description: UID is the pod's unique identifier.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+            required:
+            - failureType
+            - observedAt
+            - signature
+            - target
+            type: object
+          status:
+            description: DiagnosisStatus is the observed progress of a diagnosis.
+              Only controllers write it.
+            properties:
+              analysis:
+                description: Analysis is the root cause conclusion and proposed action.
+                properties:
+                  action:
+                    description: Action is the proposed remediation. A type of None
+                      means no safe automated fix exists.
+                    properties:
+                      container:
+                        description: Container names the container within the pod
+                          spec that the action targets.
+                        type: string
+                      type:
+                        description: Type selects which remediation handler applies.
+                        enum:
+                        - SetMemoryLimit
+                        - SetCPULimit
+                        - SetImage
+                        - SetProbeDelay
+                        - SetProbePort
+                        - AddResourceRequests
+                        - None
+                        type: string
+                      value:
+                        description: |-
+                          Value is the action's parameter, interpreted per action type. Examples: "384Mi" for a memory
+                          limit, "nginx:1.27.3" for an image, "60" for a probe delay in seconds.
+                        maxLength: 253
+                        type: string
+                    required:
+                    - type
+                    type: object
+                  confidencePercent:
+                    description: |-
+                      ConfidencePercent expresses certainty from 0 to 100. An integer is used deliberately, since
+                      the Kubernetes API conventions discourage floating point fields.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  provider:
+                    description: Provider names the analyzer that produced this result,
+                      such as rules or an LLM backend.
+                    type: string
+                  rootCause:
+                    description: RootCause explains the failure in a form suitable
+                      for a pull request description.
+                    maxLength: 2048
+                    type: string
+                  ruleID:
+                    description: RuleID identifies the matching rule when the rule
+                      engine produced the result.
+                    type: string
+                  tokensUsed:
+                    description: TokensUsed records model token consumption, and is
+                      zero for the rule engine.
+                    format: int32
+                    type: integer
+                required:
+                - action
+                - confidencePercent
+                - provider
+                - rootCause
+                type: object
+              conditions:
+                description: Conditions carries standard condition entries for detailed
+                  state and error reporting.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              evidence:
+                description: Evidence is the gathered diagnostic context.
+                properties:
+                  events:
+                    description: Events holds warning events for the pod, most recent
+                      first, one per line.
+                    maxLength: 4096
+                    type: string
+                  exitCode:
+                    description: ExitCode is the previous instance's exit status,
+                      when the container terminated.
+                    format: int32
+                    type: integer
+                  logs:
+                    description: |-
+                      Logs holds the tail of the failing container's output, taken from the previous instance when
+                      the container has already restarted. Truncated to stay well inside object size limits.
+                    maxLength: 8192
+                    type: string
+                  redactedFields:
+                    description: |-
+                      RedactedFields counts values removed by the redactor before the evidence was stored. A non
+                      zero count means sensitive material was present and did not leave the cluster.
+                    format: int32
+                    type: integer
+                  restartCount:
+                    description: RestartCount is the container's restart count at
+                      collection time.
+                    format: int32
+                    type: integer
+                  terminationReason:
+                    description: TerminationReason is the reason reported for the
+                      previous termination, such as OOMKilled.
+                    type: string
+                  waitingReason:
+                    description: WaitingReason is the reason the container is currently
+                      not running, such as CrashLoopBackOff.
+                    type: string
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the spec generation most recently
+                  reconciled.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the current pipeline stage.
+                enum:
+                - Detected
+                - Enriched
+                - Diagnosed
+                - Remediating
+                - Healed
+                - Failed
+                - AwaitingHuman
+                type: string
+              remediation:
+                description: Remediation is the record of what was attempted.
+                properties:
+                  applied:
+                    description: |-
+                      Applied reports whether a change was actually made. False in dry run mode, and false when the
+                      confidence gate or the allowed action list rejected the proposal.
+                    type: boolean
+                  mode:
+                    description: Mode is the remediation strategy that applied.
+                    enum:
+                    - DryRun
+                    - PullRequest
+                    - Direct
+                    type: string
+                  patch:
+                    description: |-
+                      Patch is the computed change in a human readable form. Recorded in every mode, including dry
+                      run, so the proposal can be reviewed without applying it.
+                    maxLength: 4096
+                    type: string
+                  reference:
+                    description: Reference points at the resulting artifact, such
+                      as a pull request URL.
+                    type: string
+                  skipReason:
+                    description: SkipReason explains why no change was made, when
+                      Applied is false.
+                    type: string
+                  verified:
+                    description: Verified reports the outcome of the recovery check.
+                      Nil means verification has not completed.
+                    type: boolean
+                required:
+                - applied
+                - mode
+                type: object
+              timeToDiagnosis:
+                description: |-
+                  TimeToDiagnosis is the interval from detection to a recorded root cause, formatted for
+                  display. Derived from Timings and stored so it can be surfaced as a printer column.
+                type: string
+              timeToRecovery:
+                description: |-
+                  TimeToRecovery is the interval from detection to verified recovery, formatted for display.
+                  Populated only in direct mode, since pull request mode depends on human review the operator
+                  does not control.
+                type: string
+              timings:
+                description: Timings records stage completion times.
+                properties:
+                  detectedAt:
+                    format: date-time
+                    type: string
+                  diagnosedAt:
+                    format: date-time
+                    type: string
+                  enrichedAt:
+                    format: date-time
+                    type: string
+                  healedAt:
+                    format: date-time
+                    type: string
+                  remediatedAt:
+                    format: date-time
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
