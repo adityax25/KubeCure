@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- healing_v1alpha1_diagnosis.yaml
+- healing_v1alpha1_healingpolicy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
