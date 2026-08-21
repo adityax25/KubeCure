@@ -1,0 +1,10 @@
+# GitHub's Linguist counts every tracked file toward the repository language bar,
+# including files produced by tooling rather than written by hand. The entries below
+# exclude scaffolded and generated output so the statistics reflect authored code.
+
+Makefile                              linguist-generated=true
+Dockerfile                            linguist-generated=true
+config/**                             linguist-generated=true
+api/v1alpha1/zz_generated.deepcopy.go linguist-generated=true
+test/utils/**                         linguist-generated=true
+.devcontainer/**                      linguist-generated=true
