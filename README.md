@@ -60,12 +60,53 @@ diagnosis, and from detection to verified recovery, are measured values rather t
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-| Controller | Watches | Responsibility |
-| :- | :- | :- |
-| **Detector** | Pods, Events | Classifies failure signals and opens a `Diagnosis` for each distinct failure signature. |
-| **Evidence** | Diagnoses at `Detected` | Collects container logs, cluster events, and the owning workload spec, then redacts sensitive values. |
-| **Analysis** | Diagnoses at `Enriched` | Produces a root cause and a typed remediation action, via the rule engine or an LLM. |
-| **Remediation** | Diagnoses at `Diagnosed` | Applies the action as a cluster patch or a pull request, then verifies that the workload recovered. |
+### The pipeline
+
+Five stages are handled by four controllers. Verification is performed by the remediation
+controller rather than a separate one, because confirming recovery requires knowing what was
+changed.
+
+| Stage | Controller | Acts on phase | Advances to |
+| :- | :- | :- | :- |
+| Detect | **Detector** | watches Pods, not diagnoses | creates at `Detected` |
+| Collect evidence | **Evidence** | `Detected` | `Enriched` |
+| Analyze | **Analysis** | `Enriched` | `Diagnosed` |
+| Remediate | **Remediation** | `Diagnosed` | `Remediating` |
+| Verify | **Remediation** | `Remediating` | `Healed` or `Failed` |
+
+### What each controller guarantees
+
+Every controller maintains one invariant, and none of them is "the workload should be healthy".
+KubeCure's controllers observe, record, and propose; the cluster's own controllers perform restarts.
+
+| Controller | Desired state it maintains |
+| :- | :- |
+| **Detector** | every failing pod has a corresponding Diagnosis |
+| **Evidence** | every `Detected` diagnosis has evidence attached |
+| **Analysis** | every `Enriched` diagnosis has a recorded root cause |
+| **Remediation** | every `Diagnosed` diagnosis has been acted on and verified |
+
+Because reconciliation is level triggered, these hold continuously rather than only at the moment a
+failure appears. Deleting a diagnosis while its pod is still failing causes the detector to observe
+the gap and recreate it, without any code written for that case.
+
+### Phases
+
+Five phases progress in order, and exactly one of three terminal phases is reached.
+
+| Phase | Meaning |
+| :- | :- |
+| `Detected` | the failure has been classified, no evidence gathered yet |
+| `Enriched` | logs, events, and owner context collected and redacted |
+| `Diagnosed` | a root cause and a typed remediation action have been recorded |
+| `Remediating` | an action has been applied and recovery is being verified |
+| `Healed` | the workload recovered and stayed stable through the verification window |
+| `Failed` | an action was applied and the workload did not recover |
+| `AwaitingHuman` | nothing was applied, and a person must decide |
+
+`AwaitingHuman` is reached from two places: from `Diagnosed` when no safe action exists, when
+confidence falls below the policy threshold, when the action is not permitted by policy, or in dry
+run mode; and from `Remediating` in pull request mode, where merging is a human decision.
 
 The controllers never call one another. Each watches for objects in the single phase it owns,
 performs its transformation, and advances the phase, and that write is what wakes the next stage.
@@ -139,17 +180,20 @@ Both modes are gated by a confidence threshold and an explicit whitelist of perm
 ### Completed
 
 - Repository initialized
+- `Diagnosis` and `HealingPolicy` API schemas, generated as CRDs and installed
+- Failure classification covering eight failure modes, implemented as a pure function with a table
+  driven test suite that requires no cluster
+- Deterministic failure signatures for deduplication, and DNS safe object naming
 
 ### In Progress
 
-- Project scaffolding and custom resource definitions
+- A reproducible failure injector, one deliberate broken workload per failure mode
 
 ### Upcoming
 
-- Failure detection across a defined set of pod failure modes
-- A reproducible failure injector, one deliberate broken workload per mode
+- Detector controller: watch pods and open diagnoses
 - Evidence collection: logs, events, owner references, with redaction
-- Rule-based analyzer, then LLM-backed analysis
+- Rule based analyzer, then LLM backed analysis as an escalation path
 - Remediation in dry run, pull request, and direct modes, with verification
 - ArgoCD wired to a manifests repository to close the GitOps loop
 - GitHub Actions for build, test, lint, and image publishing
