@@ -1,0 +1,224 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "creationTimestamp": "2026-08-26T01:55:56Z",
+    "generateName": "crashloop-worker-54b54d7d66-",
+    "generation": 1,
+    "labels": {
+      "app": "crashloop-worker",
+      "kubecure.io/scenario": "crashloopbackoff",
+      "pod-template-hash": "54b54d7d66"
+    },
+    "name": "crashloop-worker-54b54d7d66-nv5s2",
+    "namespace": "kubecure-demo",
+    "ownerReferences": [
+      {
+        "apiVersion": "apps/v1",
+        "blockOwnerDeletion": true,
+        "controller": true,
+        "kind": "ReplicaSet",
+        "name": "crashloop-worker-54b54d7d66",
+        "uid": "c93f4ceb-471e-4bc5-a10f-f117f425bef6"
+      }
+    ],
+    "resourceVersion": "280931",
+    "uid": "45f3ed80-ea44-4b8e-a0fa-0fec4b06facc"
+  },
+  "spec": {
+    "containers": [
+      {
+        "command": [
+          "sh",
+          "-c",
+          "echo \"starting settlement worker\"\necho \"FATAL: required environment variable SETTLEMENT_DB_URL is not set\"\nexit 1\n"
+        ],
+        "image": "busybox:1.36",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "worker",
+        "resources": {},
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+            "name": "kube-api-access-kzbwh",
+            "readOnly": true
+          }
+        ]
+      }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "nodeName": "kubecure-dev-control-plane",
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "restartPolicy": "Always",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "serviceAccount": "default",
+    "serviceAccountName": "default",
+    "terminationGracePeriodSeconds": 30,
+    "tolerations": [
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/not-ready",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      },
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/unreachable",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      }
+    ],
+    "volumes": [
+      {
+        "name": "kube-api-access-kzbwh",
+        "projected": {
+          "defaultMode": 420,
+          "sources": [
+            {
+              "serviceAccountToken": {
+                "expirationSeconds": 3607,
+                "path": "token"
+              }
+            },
+            {
+              "configMap": {
+                "items": [
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  }
+                ],
+                "name": "kube-root-ca.crt"
+              }
+            },
+            {
+              "downwardAPI": {
+                "items": [
+                  {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.namespace"
+                    },
+                    "path": "namespace"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastProbeTime": null,
+        "lastTransitionTime": "2026-08-26T01:56:03Z",
+        "observedGeneration": 1,
+        "status": "True",
+        "type": "PodReadyToStartContainers"
+      },
+      {
+        "lastProbeTime": null,
+        "lastTransitionTime": "2026-08-26T01:55:56Z",
+        "observedGeneration": 1,
+        "status": "True",
+        "type": "Initialized"
+      },
+      {
+        "lastProbeTime": null,
+        "lastTransitionTime": "2026-08-26T01:55:56Z",
+        "message": "containers with unready status: [worker]",
+        "observedGeneration": 1,
+        "reason": "ContainersNotReady",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastProbeTime": null,
+        "lastTransitionTime": "2026-08-26T01:55:56Z",
+        "message": "containers with unready status: [worker]",
+        "observedGeneration": 1,
+        "reason": "ContainersNotReady",
+        "status": "False",
+        "type": "ContainersReady"
+      },
+      {
+        "lastProbeTime": null,
+        "lastTransitionTime": "2026-08-26T01:55:56Z",
+        "observedGeneration": 1,
+        "status": "True",
+        "type": "PodScheduled"
+      }
+    ],
+    "containerStatuses": [
+      {
+        "containerID": "containerd://06a11e93e385a846e637d4d74b7231ab193874e81c382a06dd26d359175d3c09",
+        "image": "docker.io/library/busybox:1.36",
+        "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+        "lastState": {
+          "terminated": {
+            "containerID": "containerd://e89f6493321b8a9004c241ed3aab7a358f558c54c17738515762d00c8a3019b1",
+            "exitCode": 1,
+            "finishedAt": "2026-08-26T01:57:25Z",
+            "reason": "Error",
+            "startedAt": "2026-08-26T01:57:25Z"
+          }
+        },
+        "name": "worker",
+        "ready": false,
+        "resources": {},
+        "restartCount": 5,
+        "started": false,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://06a11e93e385a846e637d4d74b7231ab193874e81c382a06dd26d359175d3c09",
+            "exitCode": 1,
+            "finishedAt": "2026-08-26T01:58:49Z",
+            "reason": "Error",
+            "startedAt": "2026-08-26T01:58:49Z"
+          }
+        },
+        "user": {
+          "linux": {
+            "gid": 0,
+            "supplementalGroups": [
+              0,
+              10
+            ],
+            "uid": 0
+          }
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+            "name": "kube-api-access-kzbwh",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          }
+        ]
+      }
+    ],
+    "hostIP": "172.18.0.2",
+    "hostIPs": [
+      {
+        "ip": "172.18.0.2"
+      }
+    ],
+    "observedGeneration": 1,
+    "phase": "Running",
+    "podIP": "10.244.0.6",
+    "podIPs": [
+      {
+        "ip": "10.244.0.6"
+      }
+    ],
+    "qosClass": "BestEffort",
+    "startTime": "2026-08-26T01:55:56Z"
+  }
+}

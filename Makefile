@@ -360,3 +360,25 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Failure scenarios
+
+.PHONY: scenarios-apply
+scenarios-apply: ## Apply all failure scenarios. Pass SCENARIO=<name> for just one.
+	./test/scenarios/inject.sh apply $(or $(SCENARIO),all)
+
+.PHONY: scenarios-delete
+scenarios-delete: ## Remove all failure scenarios. Pass SCENARIO=<name> for just one.
+	./test/scenarios/inject.sh delete $(or $(SCENARIO),all)
+
+.PHONY: scenarios-status
+scenarios-status: ## Show the current state of every applied scenario.
+	./test/scenarios/inject.sh status
+
+.PHONY: scenarios-capture
+scenarios-capture: ## Capture a failing pod status as a test fixture. Requires SCENARIO=<name>.
+	./test/scenarios/inject.sh capture $(SCENARIO)
+
+.PHONY: scenarios-list
+scenarios-list: ## List available failure scenarios.
+	./test/scenarios/inject.sh list

@@ -1,0 +1,23 @@
+# The image tag does not exist in the registry. The kubelet retries the pull with backoff and
+# reports ErrImagePull, then ImagePullBackOff.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imagepull-gateway
+  namespace: kubecure-demo
+  labels:
+    kubecure.io/scenario: imagepullbackoff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: imagepull-gateway
+  template:
+    metadata:
+      labels:
+        app: imagepull-gateway
+        kubecure.io/scenario: imagepullbackoff
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:1.27.9-this-tag-does-not-exist

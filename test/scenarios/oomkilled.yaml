@@ -1,0 +1,40 @@
+# The process allocates well beyond the container's memory limit, so the kernel terminates it with
+# SIGKILL. After the restart the container reports CrashLoopBackOff, and OOMKilled survives only in
+# the previous termination record. This scenario is what proves the classification precedence in
+# ADR-013: the detector must report the memory kill rather than the crash loop the cluster displays.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oomkilled-api
+  namespace: kubecure-demo
+  labels:
+    kubecure.io/scenario: oomkilled
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oomkilled-api
+  template:
+    metadata:
+      labels:
+        app: oomkilled-api
+        kubecure.io/scenario: oomkilled
+    spec:
+      containers:
+        - name: api
+          image: python:3.12-alpine
+          command:
+            - python
+            - -u
+            - -c
+            - |
+              import time
+              print("cache warm-up starting", flush=True)
+              buffer = bytearray(200 * 1024 * 1024)
+              print("cache warm-up complete", flush=True)
+              time.sleep(600)
+          resources:
+            requests:
+              memory: 32Mi
+            limits:
+              memory: 32Mi

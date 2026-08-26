@@ -8,3 +8,7 @@ config/**                             linguist-generated=true
 api/v1alpha1/zz_generated.deepcopy.go linguist-generated=true
 test/utils/**                         linguist-generated=true
 .devcontainer/**                      linguist-generated=true
+
+# The failure scenarios are hand written and carry real project logic: each workload is
+# engineered to trigger one specific failure mode. Linguist excludes YAML by default.
+test/scenarios/*.yaml linguist-detectable=true

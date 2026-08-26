@@ -1,0 +1,27 @@
+# The pod references a ConfigMap that does not exist. The kubelet cannot assemble the container's
+# environment and reports CreateContainerConfigError, naming the missing object in the event message.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: configerror-notifier
+  namespace: kubecure-demo
+  labels:
+    kubecure.io/scenario: createcontainerconfigerror
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: configerror-notifier
+  template:
+    metadata:
+      labels:
+        app: configerror-notifier
+        kubecure.io/scenario: createcontainerconfigerror
+    spec:
+      containers:
+        - name: notifier
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep 600"]
+          envFrom:
+            - configMapRef:
+                name: notifier-settings

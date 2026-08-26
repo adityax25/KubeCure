@@ -1,0 +1,35 @@
+# The readiness probe targets a port nothing is listening on, so the container runs but never
+# becomes ready. No liveness probe is set, so it is never restarted and stays in this state.
+#
+# The declared budget is initialDelaySeconds + (failureThreshold x periodSeconds), which is 20
+# seconds here. Detection adds a 15 second buffer, per ADR-014.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: probefail-checkout
+  namespace: kubecure-demo
+  labels:
+    kubecure.io/scenario: probefailure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: probefail-checkout
+  template:
+    metadata:
+      labels:
+        app: probefail-checkout
+        kubecure.io/scenario: probefailure
+    spec:
+      containers:
+        - name: checkout
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9999
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
