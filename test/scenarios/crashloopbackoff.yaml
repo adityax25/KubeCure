@@ -1,3 +1,6 @@
+# Three replicas fail identically, which must produce one diagnosis rather than three (ADR-008).
+# The log line carries a fake connection string so that redaction is exercised on real output.
+#
 # The container exits non-zero immediately. The kubelet restarts it, backing off further after each
 # attempt, and reports CrashLoopBackOff while it waits between attempts.
 apiVersion: apps/v1
@@ -8,7 +11,7 @@ metadata:
   labels:
     kubecure.io/scenario: crashloopbackoff
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: crashloop-worker
@@ -26,5 +29,6 @@ spec:
             - -c
             - |
               echo "starting settlement worker"
+              echo "connecting to postgres://settlement_app:hunter2-not-a-real-pw@db.internal:5432/orders"
               echo "FATAL: required environment variable SETTLEMENT_DB_URL is not set"
               exit 1

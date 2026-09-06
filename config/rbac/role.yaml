@@ -7,12 +7,23 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - endpoints
   - events
+  - nodes
   - pods
+  - secrets
+  - services
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
 - apiGroups:
   - apps
   resources:
@@ -44,12 +55,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - healing.kubecure.io
-  resources:
-  - diagnoses/finalizers
-  verbs:
-  - update
 - apiGroups:
   - healing.kubecure.io
   resources:

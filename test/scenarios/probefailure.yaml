@@ -33,3 +33,20 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
+---
+# The Service exists so that the consequence of the failure is observable: the pod runs, but never
+# becomes ready, so it is never admitted to the endpoint set and receives no traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: probefail-checkout
+  namespace: kubecure-demo
+  labels:
+    kubecure.io/scenario: probefailure
+spec:
+  selector:
+    app: probefail-checkout
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
