@@ -42,7 +42,7 @@ const (
 
 // ActionType is a remediation the operator knows how to perform. The set is deliberately closed:
 // an analyzer may only select from these, which bounds what any automated fix can change.
-// +kubebuilder:validation:Enum=SetMemoryLimit;SetCPULimit;SetImage;SetProbeDelay;SetProbePort;AddResourceRequests;None
+// +kubebuilder:validation:Enum=SetMemoryLimit;SetCPULimit;SetImage;SetProbeDelay;SetProbePort;AddResourceRequests;RollbackToRevision;RestartWorkload;None
 type ActionType string
 
 const (
@@ -58,6 +58,13 @@ const (
 	ActionSetProbePort ActionType = "SetProbePort"
 	// ActionAddResourceRequests adds resource requests where none are declared.
 	ActionAddResourceRequests ActionType = "AddResourceRequests"
+	// ActionRollbackToRevision returns a workload to an earlier revision. This is the one remedy
+	// that addresses application level failures, since a regression introduced by a deployment can
+	// be undone without changing source.
+	ActionRollbackToRevision ActionType = "RollbackToRevision"
+	// ActionRestartWorkload restarts a workload's pods, mitigating a stuck or leaking process while
+	// a durable fix is prepared.
+	ActionRestartWorkload ActionType = "RestartWorkload"
 	// ActionNone indicates no safe automated fix exists, and the finding requires human judgement.
 	ActionNone ActionType = "None"
 )
@@ -91,4 +98,30 @@ const (
 	RemediationPullRequest RemediationMode = "PullRequest"
 	// RemediationDirect patches the live resource through the API server.
 	RemediationDirect RemediationMode = "Direct"
+)
+
+// BlastRadius is how much of the cluster a remediation can affect if it is wrong. It is deliberately
+// distinct from diagnostic confidence: confidence measures certainty about the cause, blast radius
+// measures the cost of being mistaken.
+// +kubebuilder:validation:Enum=Pod;Workload;Namespace;Cluster
+type BlastRadius string
+
+const (
+	BlastRadiusPod       BlastRadius = "Pod"
+	BlastRadiusWorkload  BlastRadius = "Workload"
+	BlastRadiusNamespace BlastRadius = "Namespace"
+	BlastRadiusCluster   BlastRadius = "Cluster"
+)
+
+// Reversibility is how quickly a remediation can be undone if it proves wrong.
+// +kubebuilder:validation:Enum=Instant;Rollout;Irreversible
+type Reversibility string
+
+const (
+	// ReversibilityInstant covers changes undone by writing the previous value back.
+	ReversibilityInstant Reversibility = "Instant"
+	// ReversibilityRollout covers changes requiring pods to be replaced before the effect is undone.
+	ReversibilityRollout Reversibility = "Rollout"
+	// ReversibilityIrreversible covers changes that cannot be undone, such as anything touching data.
+	ReversibilityIrreversible Reversibility = "Irreversible"
 )

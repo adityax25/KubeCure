@@ -26,6 +26,9 @@ spec:
     - jsonPath: .spec.analyzer.provider
       name: Analyzer
       type: string
+    - jsonPath: .spec.agent.enabled
+      name: Agent
+      type: boolean
     - jsonPath: .status.activeDiagnoses
       name: Active
       type: integer
@@ -59,6 +62,52 @@ spec:
             description: HealingPolicySpec is the configuration governing how failures
               are handled in one namespace.
             properties:
+              agent:
+                description: Agent bounds the investigation loop.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled turns on goal directed investigation. When false, analysis is limited to the
+                      deterministic rule engine, which requires no credentials and no network access.
+                    type: boolean
+                  judgeEnabled:
+                    default: true
+                    description: |-
+                      JudgeEnabled turns on review of hypotheses against their cited evidence before any action is
+                      considered. Disabling it removes the check that catches unsupported conclusions.
+                    type: boolean
+                  maxCostMicroUSD:
+                    default: 50000
+                    description: MaxCostMicroUSD caps spend per investigation in millionths
+                      of a dollar.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  maxTokens:
+                    default: 20000
+                    description: MaxTokens caps model token consumption for a single
+                      investigation.
+                    format: int32
+                    minimum: 1000
+                    type: integer
+                  maxToolCalls:
+                    default: 12
+                    description: MaxToolCalls caps how many reads a single investigation
+                      may perform.
+                    format: int32
+                    maximum: 50
+                    minimum: 1
+                    type: integer
+                  timeoutSeconds:
+                    default: 60
+                    description: TimeoutSeconds caps wall clock time for a single
+                      investigation.
+                    format: int32
+                    maximum: 600
+                    minimum: 5
+                    type: integer
+                type: object
               analyzer:
                 description: Analyzer configures root cause analysis.
                 properties:
@@ -133,9 +182,22 @@ spec:
                       - SetProbeDelay
                       - SetProbePort
                       - AddResourceRequests
+                      - RollbackToRevision
+                      - RestartWorkload
                       - None
                       type: string
                     type: array
+                  maxBlastRadius:
+                    default: Workload
+                    description: |-
+                      MaxBlastRadius is the widest scope of change permitted here. Candidates affecting more than
+                      this are recorded but never applied, regardless of how confident the diagnosis is.
+                    enum:
+                    - Pod
+                    - Workload
+                    - Namespace
+                    - Cluster
+                    type: string
                   minConfidence:
                     default: 85
                     description: |-
@@ -155,6 +217,12 @@ spec:
                     - PullRequest
                     - Direct
                     type: string
+                  requireReversible:
+                    default: true
+                    description: |-
+                      RequireReversible restricts automatic application to changes that can be undone. Confidence
+                      measures certainty about the cause; this bounds the cost of being wrong about it.
+                    type: boolean
                   verificationWindow:
                     default: 2m
                     description: |-

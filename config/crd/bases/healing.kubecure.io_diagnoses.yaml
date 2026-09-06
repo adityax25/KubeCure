@@ -26,9 +26,12 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.analysis.confidencePercent
+    - jsonPath: .status.hypotheses[0].confidencePercent
       name: Conf
       type: integer
+    - jsonPath: .status.plan.selected.type
+      name: Action
+      type: string
     - jsonPath: .status.timeToDiagnosis
       name: MTTD
       type: string
@@ -136,69 +139,6 @@ spec:
             description: DiagnosisStatus is the observed progress of a diagnosis.
               Only controllers write it.
             properties:
-              analysis:
-                description: Analysis is the root cause conclusion and proposed action.
-                properties:
-                  action:
-                    description: Action is the proposed remediation. A type of None
-                      means no safe automated fix exists.
-                    properties:
-                      container:
-                        description: Container names the container within the pod
-                          spec that the action targets.
-                        type: string
-                      type:
-                        description: Type selects which remediation handler applies.
-                        enum:
-                        - SetMemoryLimit
-                        - SetCPULimit
-                        - SetImage
-                        - SetProbeDelay
-                        - SetProbePort
-                        - AddResourceRequests
-                        - None
-                        type: string
-                      value:
-                        description: |-
-                          Value is the action's parameter, interpreted per action type. Examples: "384Mi" for a memory
-                          limit, "nginx:1.27.3" for an image, "60" for a probe delay in seconds.
-                        maxLength: 253
-                        type: string
-                    required:
-                    - type
-                    type: object
-                  confidencePercent:
-                    description: |-
-                      ConfidencePercent expresses certainty from 0 to 100. An integer is used deliberately, since
-                      the Kubernetes API conventions discourage floating point fields.
-                    format: int32
-                    maximum: 100
-                    minimum: 0
-                    type: integer
-                  provider:
-                    description: Provider names the analyzer that produced this result,
-                      such as rules or an LLM backend.
-                    type: string
-                  rootCause:
-                    description: RootCause explains the failure in a form suitable
-                      for a pull request description.
-                    maxLength: 2048
-                    type: string
-                  ruleID:
-                    description: RuleID identifies the matching rule when the rule
-                      engine produced the result.
-                    type: string
-                  tokensUsed:
-                    description: TokensUsed records model token consumption, and is
-                      zero for the rule engine.
-                    format: int32
-                    type: integer
-                required:
-                - action
-                - confidencePercent
-                - provider
-                - rootCause
-                type: object
               conditions:
                 description: Conditions carries standard condition entries for detailed
                   state and error reporting.
@@ -299,6 +239,185 @@ spec:
                       not running, such as CrashLoopBackOff.
                     type: string
                 type: object
+              hypotheses:
+                description: Hypotheses are the ranked candidate explanations produced
+                  by the investigation.
+                items:
+                  description: |-
+                    Hypothesis is one candidate explanation for a failure. Investigations emit several, ranked, so
+                    that what was considered and rejected is visible rather than hidden behind a single score.
+                  properties:
+                    confidencePercent:
+                      description: |-
+                        ConfidencePercent expresses certainty from 0 to 100. Integers are used throughout, since the
+                        Kubernetes API conventions discourage floating point fields.
+                      format: int32
+                      maximum: 100
+                      minimum: 0
+                      type: integer
+                    evidenceCitations:
+                      description: |-
+                        EvidenceCitations names the specific observations supporting this hypothesis. A hypothesis
+                        citing nothing cannot survive judgement, which is what keeps reasoning auditable.
+                      items:
+                        type: string
+                      type: array
+                    id:
+                      description: ID identifies this hypothesis within the diagnosis,
+                        so a verdict and a plan can reference it.
+                      type: string
+                    proposedActions:
+                      description: ProposedActions are the remediations this explanation
+                        would imply, before ranking.
+                      items:
+                        description: |-
+                          Action is a single proposed change, produced by an analyzer and executed by a remediator.
+                          It carries no manifest content: the remediator maps the type to a hand written handler, so the
+                          blast radius of any proposal is limited to the actions implemented here.
+                        properties:
+                          container:
+                            description: Container names the container within the
+                              pod spec that the action targets.
+                            type: string
+                          type:
+                            description: Type selects which remediation handler applies.
+                            enum:
+                            - SetMemoryLimit
+                            - SetCPULimit
+                            - SetImage
+                            - SetProbeDelay
+                            - SetProbePort
+                            - AddResourceRequests
+                            - RollbackToRevision
+                            - RestartWorkload
+                            - None
+                            type: string
+                          value:
+                            description: |-
+                              Value is the action's parameter, interpreted per action type. Examples: "384Mi" for a memory
+                              limit, "nginx:1.27.3" for an image, "60" for a probe delay in seconds.
+                            maxLength: 253
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type: array
+                    rank:
+                      description: Rank orders hypotheses, with 1 being the investigation's
+                        preferred explanation.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    rootCause:
+                      description: RootCause explains the failure in a form suitable
+                        for a pull request description.
+                      maxLength: 2048
+                      type: string
+                  required:
+                  - confidencePercent
+                  - id
+                  - rank
+                  - rootCause
+                  type: object
+                type: array
+              investigation:
+                description: Investigation records how the analysis was performed
+                  and what it consumed.
+                properties:
+                  agentic:
+                    description: |-
+                      Agentic reports whether this was a goal directed loop with tool selection, as opposed to a
+                      deterministic evaluation or a single model call.
+                    type: boolean
+                  budgetExhausted:
+                    description: |-
+                      BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion, which
+                      means the result is a best effort.
+                    type: boolean
+                  costMicroUSD:
+                    description: |-
+                      CostMicroUSD is the spend in millionths of a dollar, stored as an integer to avoid floating
+                      point fields.
+                    format: int64
+                    type: integer
+                  durationMillis:
+                    format: int64
+                    type: integer
+                  provider:
+                    description: Provider names the analyzer, such as the rule engine
+                      or a model backend.
+                    type: string
+                  tokensUsed:
+                    format: int32
+                    type: integer
+                  toolCalls:
+                    description: ToolCalls is the ordered record of reads performed.
+                    items:
+                      description: |-
+                        ToolCall records one read performed during an investigation. The sequence forms the audit trail
+                        of how a conclusion was reached.
+                      properties:
+                        arguments:
+                          maxLength: 512
+                          type: string
+                        durationMillis:
+                          format: int64
+                          type: integer
+                        error:
+                          type: string
+                        summary:
+                          description: Summary is a short description of what the
+                            call returned, not the full payload.
+                          maxLength: 512
+                          type: string
+                        tool:
+                          type: string
+                      required:
+                      - tool
+                      type: object
+                    type: array
+                required:
+                - agentic
+                - provider
+                type: object
+              judgement:
+                description: Judgement is the review of those hypotheses against their
+                  cited evidence.
+                properties:
+                  provider:
+                    type: string
+                  selectedHypothesisID:
+                    description: SelectedHypothesisID is the surviving hypothesis
+                      carried forward, empty when none survived.
+                    type: string
+                  verdicts:
+                    items:
+                      description: Verdict is the judgement passed on a single hypothesis.
+                      properties:
+                        adjustedConfidencePercent:
+                          description: AdjustedConfidencePercent is the confidence
+                            after review, which may be lower than claimed.
+                          format: int32
+                          maximum: 100
+                          minimum: 0
+                          type: integer
+                        hypothesisID:
+                          type: string
+                        reasoning:
+                          maxLength: 1024
+                          type: string
+                        supported:
+                          description: Supported reports whether the cited evidence
+                            actually establishes the claim.
+                          type: boolean
+                      required:
+                      - hypothesisID
+                      - supported
+                      type: object
+                    type: array
+                required:
+                - provider
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the spec generation most recently
                   reconciled.
@@ -309,12 +428,147 @@ spec:
                 enum:
                 - Detected
                 - Enriched
-                - Diagnosed
+                - Hypothesized
+                - Judged
+                - Planned
                 - Remediating
+                - Verifying
                 - Healed
                 - Failed
                 - AwaitingHuman
                 type: string
+              plan:
+                description: Plan is the selected remediation and the candidates considered.
+                properties:
+                  candidates:
+                    description: |-
+                      Candidates records every action considered and how it scored, so a rejected option is visible
+                      alongside the chosen one.
+                    items:
+                      description: |-
+                        RankedAction is a candidate remediation scored on the dimensions that determine the cost of being
+                        wrong. These are evaluated independently of diagnostic confidence.
+                      properties:
+                        action:
+                          description: |-
+                            Action is a single proposed change, produced by an analyzer and executed by a remediator.
+                            It carries no manifest content: the remediator maps the type to a hand written handler, so the
+                            blast radius of any proposal is limited to the actions implemented here.
+                          properties:
+                            container:
+                              description: Container names the container within the
+                                pod spec that the action targets.
+                              type: string
+                            type:
+                              description: Type selects which remediation handler
+                                applies.
+                              enum:
+                              - SetMemoryLimit
+                              - SetCPULimit
+                              - SetImage
+                              - SetProbeDelay
+                              - SetProbePort
+                              - AddResourceRequests
+                              - RollbackToRevision
+                              - RestartWorkload
+                              - None
+                              type: string
+                            value:
+                              description: |-
+                                Value is the action's parameter, interpreted per action type. Examples: "384Mi" for a memory
+                                limit, "nginx:1.27.3" for an image, "60" for a probe delay in seconds.
+                              maxLength: 253
+                              type: string
+                          required:
+                          - type
+                          type: object
+                        addressesRecentChange:
+                          description: |-
+                            AddressesRecentChange reports that this action undoes a change made shortly before the
+                            failure began. Reverting a recent change is preferred over a novel forward fix.
+                          type: boolean
+                        blastRadius:
+                          description: |-
+                            BlastRadius is how much of the cluster a remediation can affect if it is wrong. It is deliberately
+                            distinct from diagnostic confidence: confidence measures certainty about the cause, blast radius
+                            measures the cost of being mistaken.
+                          enum:
+                          - Pod
+                          - Workload
+                          - Namespace
+                          - Cluster
+                          type: string
+                        policyEligible:
+                          description: PolicyEligible reports whether the governing
+                            policy permits this action type.
+                          type: boolean
+                        reversibility:
+                          description: Reversibility is how quickly a remediation
+                            can be undone if it proves wrong.
+                          enum:
+                          - Instant
+                          - Rollout
+                          - Irreversible
+                          type: string
+                        score:
+                          description: Score is the composite safety ranking, higher
+                            being safer and more preferred.
+                          format: int32
+                          maximum: 100
+                          minimum: 0
+                          type: integer
+                      required:
+                      - action
+                      - blastRadius
+                      - policyEligible
+                      - reversibility
+                      - score
+                      type: object
+                    type: array
+                  decision:
+                    description: PlanDecision is the outcome of evaluating candidate
+                      actions against policy.
+                    enum:
+                    - Apply
+                    - Defer
+                    - NoAction
+                    type: string
+                  reason:
+                    maxLength: 1024
+                    type: string
+                  selected:
+                    description: Selected is the action chosen for execution, absent
+                      when the decision is NoAction.
+                    properties:
+                      container:
+                        description: Container names the container within the pod
+                          spec that the action targets.
+                        type: string
+                      type:
+                        description: Type selects which remediation handler applies.
+                        enum:
+                        - SetMemoryLimit
+                        - SetCPULimit
+                        - SetImage
+                        - SetProbeDelay
+                        - SetProbePort
+                        - AddResourceRequests
+                        - RollbackToRevision
+                        - RestartWorkload
+                        - None
+                        type: string
+                      value:
+                        description: |-
+                          Value is the action's parameter, interpreted per action type. Examples: "384Mi" for a memory
+                          limit, "nginx:1.27.3" for an image, "60" for a probe delay in seconds.
+                        maxLength: 253
+                        type: string
+                    required:
+                    - type
+                    type: object
+                required:
+                - decision
+                type: object
               remediation:
                 description: Remediation is the record of what was attempted.
                 properties:
@@ -369,13 +623,19 @@ spec:
                   detectedAt:
                     format: date-time
                     type: string
-                  diagnosedAt:
-                    format: date-time
-                    type: string
                   enrichedAt:
                     format: date-time
                     type: string
                   healedAt:
+                    format: date-time
+                    type: string
+                  hypothesizedAt:
+                    format: date-time
+                    type: string
+                  judgedAt:
+                    format: date-time
+                    type: string
+                  plannedAt:
                     format: date-time
                     type: string
                   remediatedAt:

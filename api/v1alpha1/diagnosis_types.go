@@ -24,7 +24,7 @@ import (
 // Phase is the stage a Diagnosis has reached in the detect, enrich, analyze, remediate pipeline.
 // Each controller acts on exactly one phase and advances the object to the next, so the phase also
 // serves as the guard that prevents costly work from being repeated on requeue.
-// +kubebuilder:validation:Enum=Detected;Enriched;Diagnosed;Remediating;Healed;Failed;AwaitingHuman
+// +kubebuilder:validation:Enum=Detected;Enriched;Hypothesized;Judged;Planned;Remediating;Verifying;Healed;Failed;AwaitingHuman
 type Phase string
 
 const (
@@ -32,10 +32,17 @@ const (
 	PhaseDetected Phase = "Detected"
 	// PhaseEnriched means logs, events, and owner context have been collected and redacted.
 	PhaseEnriched Phase = "Enriched"
-	// PhaseDiagnosed means a root cause and a proposed action have been recorded.
-	PhaseDiagnosed Phase = "Diagnosed"
-	// PhaseRemediating means the action has been applied and recovery is being verified.
+	// PhaseHypothesized means the investigation produced ranked explanations, not yet scrutinised.
+	PhaseHypothesized Phase = "Hypothesized"
+	// PhaseJudged means each hypothesis has been checked against the evidence it cites.
+	PhaseJudged Phase = "Judged"
+	// PhasePlanned means a remediation has been selected but nothing has been applied. This is the
+	// boundary at which a human reviews a proposal.
+	PhasePlanned Phase = "Planned"
+	// PhaseRemediating means the selected action is being applied.
 	PhaseRemediating Phase = "Remediating"
+	// PhaseVerifying means the action was applied and recovery is being observed.
+	PhaseVerifying Phase = "Verifying"
 	// PhaseHealed means the target recovered and remained stable through the verification window.
 	PhaseHealed Phase = "Healed"
 	// PhaseFailed means remediation was attempted and the target did not recover.
@@ -103,7 +110,11 @@ type Timings struct {
 	// +optional
 	EnrichedAt *metav1.Time `json:"enrichedAt,omitempty"`
 	// +optional
-	DiagnosedAt *metav1.Time `json:"diagnosedAt,omitempty"`
+	HypothesizedAt *metav1.Time `json:"hypothesizedAt,omitempty"`
+	// +optional
+	JudgedAt *metav1.Time `json:"judgedAt,omitempty"`
+	// +optional
+	PlannedAt *metav1.Time `json:"plannedAt,omitempty"`
 	// +optional
 	RemediatedAt *metav1.Time `json:"remediatedAt,omitempty"`
 	// +optional
@@ -147,31 +158,171 @@ type Evidence struct {
 	RedactedFields int32 `json:"redactedFields,omitempty"`
 }
 
-// Analysis is the root cause conclusion and the change proposed to resolve it.
-type Analysis struct {
-	// Provider names the analyzer that produced this result, such as rules or an LLM backend.
-	Provider string `json:"provider"`
+// Hypothesis is one candidate explanation for a failure. Investigations emit several, ranked, so
+// that what was considered and rejected is visible rather than hidden behind a single score.
+type Hypothesis struct {
+	// ID identifies this hypothesis within the diagnosis, so a verdict and a plan can reference it.
+	ID string `json:"id"`
 
-	// RuleID identifies the matching rule when the rule engine produced the result.
-	// +optional
-	RuleID string `json:"ruleID,omitempty"`
+	// Rank orders hypotheses, with 1 being the investigation's preferred explanation.
+	// +kubebuilder:validation:Minimum=1
+	Rank int32 `json:"rank"`
 
 	// RootCause explains the failure in a form suitable for a pull request description.
 	// +kubebuilder:validation:MaxLength=2048
 	RootCause string `json:"rootCause"`
 
-	// ConfidencePercent expresses certainty from 0 to 100. An integer is used deliberately, since
-	// the Kubernetes API conventions discourage floating point fields.
+	// ConfidencePercent expresses certainty from 0 to 100. Integers are used throughout, since the
+	// Kubernetes API conventions discourage floating point fields.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
 	ConfidencePercent int32 `json:"confidencePercent"`
 
-	// Action is the proposed remediation. A type of None means no safe automated fix exists.
-	Action Action `json:"action"`
+	// EvidenceCitations names the specific observations supporting this hypothesis. A hypothesis
+	// citing nothing cannot survive judgement, which is what keeps reasoning auditable.
+	// +optional
+	EvidenceCitations []string `json:"evidenceCitations,omitempty"`
 
-	// TokensUsed records model token consumption, and is zero for the rule engine.
+	// ProposedActions are the remediations this explanation would imply, before ranking.
+	// +optional
+	ProposedActions []Action `json:"proposedActions,omitempty"`
+}
+
+// ToolCall records one read performed during an investigation. The sequence forms the audit trail
+// of how a conclusion was reached.
+type ToolCall struct {
+	Tool string `json:"tool"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Arguments string `json:"arguments,omitempty"`
+
+	// Summary is a short description of what the call returned, not the full payload.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Summary string `json:"summary,omitempty"`
+
+	// +optional
+	DurationMillis int64 `json:"durationMillis,omitempty"`
+
+	// +optional
+	Error string `json:"error,omitempty"`
+}
+
+// Investigation records how an analysis was performed and what it consumed. It exists because an
+// autonomous component acting on a cluster must be accountable for its own behaviour.
+type Investigation struct {
+	// Provider names the analyzer, such as the rule engine or a model backend.
+	Provider string `json:"provider"`
+
+	// Agentic reports whether this was a goal directed loop with tool selection, as opposed to a
+	// deterministic evaluation or a single model call.
+	Agentic bool `json:"agentic"`
+
+	// ToolCalls is the ordered record of reads performed.
+	// +optional
+	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
+
 	// +optional
 	TokensUsed int32 `json:"tokensUsed,omitempty"`
+
+	// CostMicroUSD is the spend in millionths of a dollar, stored as an integer to avoid floating
+	// point fields.
+	// +optional
+	CostMicroUSD int64 `json:"costMicroUSD,omitempty"`
+
+	// +optional
+	DurationMillis int64 `json:"durationMillis,omitempty"`
+
+	// BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion, which
+	// means the result is a best effort.
+	// +optional
+	BudgetExhausted bool `json:"budgetExhausted,omitempty"`
+}
+
+// Verdict is the judgement passed on a single hypothesis.
+type Verdict struct {
+	HypothesisID string `json:"hypothesisID"`
+
+	// Supported reports whether the cited evidence actually establishes the claim.
+	Supported bool `json:"supported"`
+
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Reasoning string `json:"reasoning,omitempty"`
+
+	// AdjustedConfidencePercent is the confidence after review, which may be lower than claimed.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	AdjustedConfidencePercent int32 `json:"adjustedConfidencePercent,omitempty"`
+}
+
+// Judgement is the review of an investigation's hypotheses against the evidence they cite. It runs
+// separately from the investigation so that a failed review does not discard expensive work.
+type Judgement struct {
+	Provider string `json:"provider"`
+
+	// +optional
+	Verdicts []Verdict `json:"verdicts,omitempty"`
+
+	// SelectedHypothesisID is the surviving hypothesis carried forward, empty when none survived.
+	// +optional
+	SelectedHypothesisID string `json:"selectedHypothesisID,omitempty"`
+}
+
+// RankedAction is a candidate remediation scored on the dimensions that determine the cost of being
+// wrong. These are evaluated independently of diagnostic confidence.
+type RankedAction struct {
+	Action Action `json:"action"`
+
+	BlastRadius   BlastRadius   `json:"blastRadius"`
+	Reversibility Reversibility `json:"reversibility"`
+
+	// AddressesRecentChange reports that this action undoes a change made shortly before the
+	// failure began. Reverting a recent change is preferred over a novel forward fix.
+	// +optional
+	AddressesRecentChange bool `json:"addressesRecentChange,omitempty"`
+
+	// PolicyEligible reports whether the governing policy permits this action type.
+	PolicyEligible bool `json:"policyEligible"`
+
+	// Score is the composite safety ranking, higher being safer and more preferred.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	Score int32 `json:"score"`
+}
+
+// PlanDecision is the outcome of evaluating candidate actions against policy.
+// +kubebuilder:validation:Enum=Apply;Defer;NoAction
+type PlanDecision string
+
+const (
+	// PlanApply means a permitted action was selected and may be executed.
+	PlanApply PlanDecision = "Apply"
+	// PlanDefer means an action exists but policy requires a human, whether through dry run mode,
+	// a confidence threshold, or an action type that is not permitted here.
+	PlanDefer PlanDecision = "Defer"
+	// PlanNoAction means no safe automated remedy exists for this cause.
+	PlanNoAction PlanDecision = "NoAction"
+)
+
+// Plan is the selected remediation and the candidates it was chosen from.
+type Plan struct {
+	Decision PlanDecision `json:"decision"`
+
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// Selected is the action chosen for execution, absent when the decision is NoAction.
+	// +optional
+	Selected *Action `json:"selected,omitempty"`
+
+	// Candidates records every action considered and how it scored, so a rejected option is visible
+	// alongside the chosen one.
+	// +optional
+	Candidates []RankedAction `json:"candidates,omitempty"`
 }
 
 // Remediation records what was attempted and whether the target recovered.
@@ -235,9 +386,21 @@ type DiagnosisStatus struct {
 	// +optional
 	Evidence *Evidence `json:"evidence,omitempty"`
 
-	// Analysis is the root cause conclusion and proposed action.
+	// Investigation records how the analysis was performed and what it consumed.
 	// +optional
-	Analysis *Analysis `json:"analysis,omitempty"`
+	Investigation *Investigation `json:"investigation,omitempty"`
+
+	// Hypotheses are the ranked candidate explanations produced by the investigation.
+	// +optional
+	Hypotheses []Hypothesis `json:"hypotheses,omitempty"`
+
+	// Judgement is the review of those hypotheses against their cited evidence.
+	// +optional
+	Judgement *Judgement `json:"judgement,omitempty"`
+
+	// Plan is the selected remediation and the candidates considered.
+	// +optional
+	Plan *Plan `json:"plan,omitempty"`
 
 	// Remediation is the record of what was attempted.
 	// +optional
@@ -254,7 +417,8 @@ type DiagnosisStatus struct {
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.target.name`
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.failureType`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Conf",type=integer,JSONPath=`.status.analysis.confidencePercent`
+// +kubebuilder:printcolumn:name="Conf",type=integer,JSONPath=`.status.hypotheses[0].confidencePercent`
+// +kubebuilder:printcolumn:name="Action",type=string,JSONPath=`.status.plan.selected.type`
 // +kubebuilder:printcolumn:name="MTTD",type=string,JSONPath=`.status.timeToDiagnosis`
 // +kubebuilder:printcolumn:name="MTTR",type=string,JSONPath=`.status.timeToRecovery`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

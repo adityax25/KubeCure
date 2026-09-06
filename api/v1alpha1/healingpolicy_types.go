@@ -43,6 +43,49 @@ type AnalyzerConfig struct {
 	MinRuleConfidence int32 `json:"minRuleConfidence,omitempty"`
 }
 
+// AgentConfig bounds the investigation loop. Every limit is independent, and the loop stops on
+// whichever is reached first, so an investigation can neither run indefinitely nor spend without a
+// ceiling.
+type AgentConfig struct {
+	// Enabled turns on goal directed investigation. When false, analysis is limited to the
+	// deterministic rule engine, which requires no credentials and no network access.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxToolCalls caps how many reads a single investigation may perform.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=50
+	// +kubebuilder:default=12
+	MaxToolCalls int32 `json:"maxToolCalls,omitempty"`
+
+	// MaxTokens caps model token consumption for a single investigation.
+	// +optional
+	// +kubebuilder:validation:Minimum=1000
+	// +kubebuilder:default=20000
+	MaxTokens int32 `json:"maxTokens,omitempty"`
+
+	// MaxCostMicroUSD caps spend per investigation in millionths of a dollar.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=50000
+	MaxCostMicroUSD int64 `json:"maxCostMicroUSD,omitempty"`
+
+	// TimeoutSeconds caps wall clock time for a single investigation.
+	// +optional
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=600
+	// +kubebuilder:default=60
+	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
+
+	// JudgeEnabled turns on review of hypotheses against their cited evidence before any action is
+	// considered. Disabling it removes the check that catches unsupported conclusions.
+	// +optional
+	// +kubebuilder:default=true
+	JudgeEnabled bool `json:"judgeEnabled,omitempty"`
+}
+
 // RemediationConfig governs whether and how a proposed action is applied.
 type RemediationConfig struct {
 	// Mode selects the remediation strategy. Dry run is the default so that a fresh install
@@ -62,6 +105,18 @@ type RemediationConfig struct {
 	// +optional
 	AllowedActions []ActionType `json:"allowedActions,omitempty"`
 
+	// MaxBlastRadius is the widest scope of change permitted here. Candidates affecting more than
+	// this are recorded but never applied, regardless of how confident the diagnosis is.
+	// +optional
+	// +kubebuilder:default=Workload
+	MaxBlastRadius BlastRadius `json:"maxBlastRadius,omitempty"`
+
+	// RequireReversible restricts automatic application to changes that can be undone. Confidence
+	// measures certainty about the cause; this bounds the cost of being wrong about it.
+	// +optional
+	// +kubebuilder:default=true
+	RequireReversible bool `json:"requireReversible,omitempty"`
+
 	// VerificationWindow is how long a remediated workload must stay healthy before the diagnosis
 	// is considered resolved.
 	// +optional
@@ -78,6 +133,10 @@ type HealingPolicySpec struct {
 	// Analyzer configures root cause analysis.
 	// +optional
 	Analyzer AnalyzerConfig `json:"analyzer,omitempty"`
+
+	// Agent bounds the investigation loop.
+	// +optional
+	Agent AgentConfig `json:"agent,omitempty"`
 
 	// Remediation configures whether and how fixes are applied.
 	// +optional
@@ -120,6 +179,7 @@ type HealingPolicyStatus struct {
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.remediation.mode`
 // +kubebuilder:printcolumn:name="MinConf",type=integer,JSONPath=`.spec.remediation.minConfidence`
 // +kubebuilder:printcolumn:name="Analyzer",type=string,JSONPath=`.spec.analyzer.provider`
+// +kubebuilder:printcolumn:name="Agent",type=boolean,JSONPath=`.spec.agent.enabled`
 // +kubebuilder:printcolumn:name="Active",type=integer,JSONPath=`.status.activeDiagnoses`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
