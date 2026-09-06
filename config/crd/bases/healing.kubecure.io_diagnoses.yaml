@@ -203,26 +203,104 @@ spec:
               evidence:
                 description: Evidence is the gathered diagnostic context.
                 properties:
-                  events:
-                    description: Events holds warning events for the pod, most recent
-                      first, one per line.
-                    maxLength: 4096
-                    type: string
+                  complete:
+                    description: |-
+                      Complete reports that every required item was collected. When false, any conclusion drawn is
+                      a best effort and its confidence is capped accordingly.
+
+                      This field is serialised even when false: an absent value and an explicit false would
+                      otherwise be indistinguishable, which is exactly the ambiguity this stage exists to remove.
+                    type: boolean
                   exitCode:
                     description: ExitCode is the previous instance's exit status,
                       when the container terminated.
                     format: int32
                     type: integer
-                  logs:
+                  items:
                     description: |-
-                      Logs holds the tail of the failing container's output, taken from the previous instance when
-                      the container has already restarted. Truncated to stay well inside object size limits.
-                    maxLength: 8192
-                    type: string
+                      Items is the outcome of every requirement for this failure type, whether or not it produced
+                      content.
+                    items:
+                      description: |-
+                        EvidenceItem is one piece of gathered context, together with whether it was required and what
+                        happened when it was sought.
+                      properties:
+                        content:
+                          description: |-
+                            Content is the gathered material, truncated to keep the object well inside API server size
+                            limits. Content is captured rather than referenced because a failing pod may be deleted before
+                            analysis runs, after which its logs are unrecoverable.
+                          maxLength: 8192
+                          type: string
+                        kind:
+                          description: |-
+                            EvidenceKind names a category of diagnostic context. Requirements are declared per failure type,
+                            so what is gathered depends on what the failure actually needs.
+                          enum:
+                          - PreviousLogs
+                          - CurrentLogs
+                          - Events
+                          - WorkloadSpec
+                          - RolloutHistory
+                          - ConfigReferences
+                          - ServiceEndpoints
+                          - NodeStatus
+                          - SiblingPods
+                          - ResourceUsage
+                          type: string
+                        reason:
+                          description: Reason explains a status of NotApplicable or
+                            Unavailable.
+                          maxLength: 512
+                          type: string
+                        required:
+                          description: |-
+                            Required reports whether the requirement matrix considers this item necessary for the
+                            failure type under diagnosis.
+                          type: boolean
+                        status:
+                          description: |-
+                            CollectionStatus distinguishes evidence that was gathered, evidence that cannot exist for this
+                            failure, and evidence that should exist but could not be obtained. Collapsing the last two would
+                            make a confidence score uninterpretable, since it would hide what a conclusion was reached
+                            without.
+                          enum:
+                          - Collected
+                          - NotApplicable
+                          - Unavailable
+                          type: string
+                      required:
+                      - kind
+                      - status
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - kind
+                    x-kubernetes-list-type: map
+                  missingRequired:
+                    description: MissingRequired names required items that could not
+                      be obtained.
+                    items:
+                      description: |-
+                        EvidenceKind names a category of diagnostic context. Requirements are declared per failure type,
+                        so what is gathered depends on what the failure actually needs.
+                      enum:
+                      - PreviousLogs
+                      - CurrentLogs
+                      - Events
+                      - WorkloadSpec
+                      - RolloutHistory
+                      - ConfigReferences
+                      - ServiceEndpoints
+                      - NodeStatus
+                      - SiblingPods
+                      - ResourceUsage
+                      type: string
+                    type: array
                   redactedFields:
                     description: |-
-                      RedactedFields counts values removed by the redactor before the evidence was stored. A non
-                      zero count means sensitive material was present and did not leave the cluster.
+                      RedactedFields counts values removed before storage. A non zero count means sensitive material
+                      was present in the gathered content and did not leave the cluster.
                     format: int32
                     type: integer
                   restartCount:
@@ -235,8 +313,9 @@ spec:
                       previous termination, such as OOMKilled.
                     type: string
                   waitingReason:
-                    description: WaitingReason is the reason the container is currently
-                      not running, such as CrashLoopBackOff.
+                    description: |-
+                      WaitingReason is the reason the container is currently not running, such as CrashLoopBackOff.
+                      This is the symptom the cluster displays, retained alongside the classified cause.
                     type: string
                 type: object
               hypotheses:

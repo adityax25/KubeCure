@@ -121,20 +121,102 @@ type Timings struct {
 	HealedAt *metav1.Time `json:"healedAt,omitempty"`
 }
 
-// Evidence is the diagnostic context gathered for a failure. Content is captured at collection time
-// rather than referenced, because a failing pod may be deleted before analysis runs, at which point
-// its logs are unrecoverable.
-type Evidence struct {
-	// Logs holds the tail of the failing container's output, taken from the previous instance when
-	// the container has already restarted. Truncated to stay well inside object size limits.
+// EvidenceKind names a category of diagnostic context. Requirements are declared per failure type,
+// so what is gathered depends on what the failure actually needs.
+// +kubebuilder:validation:Enum=PreviousLogs;CurrentLogs;Events;WorkloadSpec;RolloutHistory;ConfigReferences;ServiceEndpoints;NodeStatus;SiblingPods;ResourceUsage
+type EvidenceKind string
+
+const (
+	// EvidencePreviousLogs is output from the container instance that died, which is the only place
+	// a crash looping container records why it stopped.
+	EvidencePreviousLogs EvidenceKind = "PreviousLogs"
+	// EvidenceCurrentLogs is output from the running instance.
+	EvidenceCurrentLogs EvidenceKind = "CurrentLogs"
+	// EvidenceEvents is the pod's warning events, which name missing objects and scheduler verdicts.
+	EvidenceEvents EvidenceKind = "Events"
+	// EvidenceWorkloadSpec is the owning workload's pod template, carrying limits, probes, and image.
+	EvidenceWorkloadSpec EvidenceKind = "WorkloadSpec"
+	// EvidenceRolloutHistory is recent revisions of the workload, which establishes whether a change
+	// shortly preceded the failure.
+	EvidenceRolloutHistory EvidenceKind = "RolloutHistory"
+	// EvidenceConfigReferences records whether referenced ConfigMaps and Secrets exist. Keys are
+	// listed; values are never read.
+	EvidenceConfigReferences EvidenceKind = "ConfigReferences"
+	// EvidenceServiceEndpoints is the Services selecting this pod and their endpoint membership.
+	EvidenceServiceEndpoints EvidenceKind = "ServiceEndpoints"
+	// EvidenceNodeStatus is the host node's conditions and allocatable capacity.
+	EvidenceNodeStatus EvidenceKind = "NodeStatus"
+	// EvidenceSiblingPods is the state of other pods in the same workload, distinguishing a single
+	// bad pod from a workload wide fault.
+	EvidenceSiblingPods EvidenceKind = "SiblingPods"
+	// EvidenceResourceUsage is observed consumption, used to size a limit correctly rather than by
+	// multiplying the current one.
+	EvidenceResourceUsage EvidenceKind = "ResourceUsage"
+)
+
+// CollectionStatus distinguishes evidence that was gathered, evidence that cannot exist for this
+// failure, and evidence that should exist but could not be obtained. Collapsing the last two would
+// make a confidence score uninterpretable, since it would hide what a conclusion was reached
+// without.
+// +kubebuilder:validation:Enum=Collected;NotApplicable;Unavailable
+type CollectionStatus string
+
+const (
+	// CollectionCollected means the item was gathered.
+	CollectionCollected CollectionStatus = "Collected"
+	// CollectionNotApplicable means the item cannot exist for this failure. A container that never
+	// started has no logs, and that absence is itself informative.
+	CollectionNotApplicable CollectionStatus = "NotApplicable"
+	// CollectionUnavailable means the item was expected but could not be obtained, for instance
+	// resource usage in a cluster with no metrics server.
+	CollectionUnavailable CollectionStatus = "Unavailable"
+)
+
+// EvidenceItem is one piece of gathered context, together with whether it was required and what
+// happened when it was sought.
+type EvidenceItem struct {
+	Kind   EvidenceKind     `json:"kind"`
+	Status CollectionStatus `json:"status"`
+
+	// Required reports whether the requirement matrix considers this item necessary for the
+	// failure type under diagnosis.
+	// +optional
+	Required bool `json:"required,omitempty"`
+
+	// Reason explains a status of NotApplicable or Unavailable.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Reason string `json:"reason,omitempty"`
+
+	// Content is the gathered material, truncated to keep the object well inside API server size
+	// limits. Content is captured rather than referenced because a failing pod may be deleted before
+	// analysis runs, after which its logs are unrecoverable.
 	// +optional
 	// +kubebuilder:validation:MaxLength=8192
-	Logs string `json:"logs,omitempty"`
+	Content string `json:"content,omitempty"`
+}
 
-	// Events holds warning events for the pod, most recent first, one per line.
+// Evidence is the diagnostic context gathered for a failure, collected against the requirement
+// matrix for its failure type.
+type Evidence struct {
+	// Items is the outcome of every requirement for this failure type, whether or not it produced
+	// content.
 	// +optional
-	// +kubebuilder:validation:MaxLength=4096
-	Events string `json:"events,omitempty"`
+	// +listType=map
+	// +listMapKey=kind
+	Items []EvidenceItem `json:"items,omitempty"`
+
+	// Complete reports that every required item was collected. When false, any conclusion drawn is
+	// a best effort and its confidence is capped accordingly.
+	//
+	// This field is serialised even when false: an absent value and an explicit false would
+	// otherwise be indistinguishable, which is exactly the ambiguity this stage exists to remove.
+	// +optional
+	Complete bool `json:"complete"`
+
+	// MissingRequired names required items that could not be obtained.
+	// +optional
+	MissingRequired []EvidenceKind `json:"missingRequired,omitempty"`
 
 	// ExitCode is the previous instance's exit status, when the container terminated.
 	// +optional
@@ -149,11 +231,12 @@ type Evidence struct {
 	TerminationReason string `json:"terminationReason,omitempty"`
 
 	// WaitingReason is the reason the container is currently not running, such as CrashLoopBackOff.
+	// This is the symptom the cluster displays, retained alongside the classified cause.
 	// +optional
 	WaitingReason string `json:"waitingReason,omitempty"`
 
-	// RedactedFields counts values removed by the redactor before the evidence was stored. A non
-	// zero count means sensitive material was present and did not leave the cluster.
+	// RedactedFields counts values removed before storage. A non zero count means sensitive material
+	// was present in the gathered content and did not leave the cluster.
 	// +optional
 	RedactedFields int32 `json:"redactedFields,omitempty"`
 }
