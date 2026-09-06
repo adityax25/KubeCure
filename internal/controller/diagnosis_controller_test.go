@@ -51,7 +51,16 @@ var _ = Describe("Diagnosis Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: healingv1alpha1.DiagnosisSpec{
+						Target: healingv1alpha1.TargetRef{
+							Name: "test-pod",
+							UID:  "3f8a1c2e-0000-0000-0000-000000000001",
+						},
+						FailureType: healingv1alpha1.FailureOOMKilled,
+						Container:   "api",
+						Signature:   "a3f21b9c",
+						ObservedAt:  metav1.Now(),
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

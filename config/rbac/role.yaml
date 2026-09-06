@@ -5,6 +5,34 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - healing.kubecure.io
   resources:
   - diagnoses
@@ -30,3 +58,11 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - healing.kubecure.io
+  resources:
+  - healingpolicies
+  verbs:
+  - get
+  - list
+  - watch
