@@ -2,37 +2,25 @@
 
 **An AI-native, Go-based autonomic self-healing engine for Kubernetes.**
 
-Kubernetes will restart a broken container indefinitely without ever establishing why it broke.
-KubeCure adds the missing step: it detects pod failures, gathers the evidence a human engineer
-would gather, produces a root cause hypothesis, and proposes a concrete fix as a reviewable
-change.
+Kubernetes will restart a broken container indefinitely without ever establishing why it broke. KubeCure adds the missing step: it detects pod failures, gathers the evidence a human engineer would gather, produces a root cause hypothesis, and proposes a concrete fix as a reviewable change.
 
-> **Status: early development.** The [Current Status](#current-status) section tracks exactly
-> what is built versus planned. Nothing in this document describes capability that does not exist.
+> **Status: early development.** The [Current Status](#current-status) section tracks exactly what is built versus planned. Nothing in this document describes capability that does not exist.
 
 ## The Problem
 
-Kubernetes self-healing is deliberately mechanical. When a container exits, the platform restarts
-it. When it keeps exiting, the platform waits longer between attempts and keeps restarting it.
-This is correct behavior and it is also the entire extent of the platform's reasoning.
+Kubernetes self-healing is deliberately mechanical. When a container exits, the platform restarts it. When it keeps exiting, the platform waits longer between attempts and keeps restarting it. This is correct behavior and it is also the entire extent of the platform's reasoning.
 
-A container killed for exceeding a memory limit that was set too low will be restarted forever,
-and the limit will never be questioned. The information needed to diagnose the failure is present
-in the cluster the whole time, spread across container statuses, events, logs, and the owning
-workload's specification. Assembling it is manual work, and that work is what stands between a
-failure and its resolution.
+A container killed for exceeding a memory limit that was set too low will be restarted forever, and the limit will never be questioned. The information needed to diagnose the failure is present in the cluster the whole time, spread across container statuses, events, logs, and the owning workload's specification. Assembling it is manual work, and that work is what stands between a failure and its resolution.
 
 ## The Solution
 
-KubeCure treats each detected failure as a first-class Kubernetes object with an explicit
-lifecycle, and advances it through a pipeline of independent controllers:
+KubeCure treats each detected failure as a first-class Kubernetes object with an explicit lifecycle, and advances it through a pipeline of independent controllers:
 
 ```
    detect  ->  collect evidence  ->  analyze  ->  remediate  ->  verify
 ```
 
-Each stage records its result and a timestamp on the object, so the time from detection to
-diagnosis, and from detection to verified recovery, are measured values rather than estimates.
+Each stage records its result and a timestamp on the object, so the time from detection to diagnosis, and from detection to verified recovery, are measured values rather than estimates.
 
 ## Architecture
 
@@ -62,9 +50,7 @@ diagnosis, and from detection to verified recovery, are measured values rather t
 
 ### The pipeline
 
-Five stages are handled by four controllers. Verification is performed by the remediation
-controller rather than a separate one, because confirming recovery requires knowing what was
-changed.
+Five stages are handled by four controllers. Verification is performed by the remediation controller rather than a separate one, because confirming recovery requires knowing what was changed.
 
 | Stage | Controller | Acts on phase | Advances to |
 | :- | :- | :- | :- |
@@ -76,8 +62,7 @@ changed.
 
 ### What each controller guarantees
 
-Every controller maintains one invariant, and none of them is "the workload should be healthy".
-KubeCure's controllers observe, record, and propose; the cluster's own controllers perform restarts.
+Every controller maintains one invariant, and none of them is "the workload should be healthy". KubeCure's controllers observe, record, and propose; the cluster's own controllers perform restarts.
 
 | Controller | Desired state it maintains |
 | :- | :- |
@@ -86,9 +71,7 @@ KubeCure's controllers observe, record, and propose; the cluster's own controlle
 | **Analysis** | every `Enriched` diagnosis has a recorded root cause |
 | **Remediation** | every `Diagnosed` diagnosis has been acted on and verified |
 
-Because reconciliation is level triggered, these hold continuously rather than only at the moment a
-failure appears. Deleting a diagnosis while its pod is still failing causes the detector to observe
-the gap and recreate it, without any code written for that case.
+Because reconciliation is level triggered, these hold continuously rather than only at the moment a failure appears. Deleting a diagnosis while its pod is still failing causes the detector to observe the gap and recreate it, without any code written for that case.
 
 ### Phases
 
@@ -104,25 +87,15 @@ Five phases progress in order, and exactly one of three terminal phases is reach
 | `Failed` | an action was applied and the workload did not recover |
 | `AwaitingHuman` | nothing was applied, and a person must decide |
 
-`AwaitingHuman` is reached from two places: from `Diagnosed` when no safe action exists, when
-confidence falls below the policy threshold, when the action is not permitted by policy, or in dry
-run mode; and from `Remediating` in pull request mode, where merging is a human decision.
+`AwaitingHuman` is reached from two places: from `Diagnosed` when no safe action exists, when confidence falls below the policy threshold, when the action is not permitted by policy, or in dry run mode; and from `Remediating` in pull request mode, where merging is a human decision.
 
-The controllers never call one another. Each watches for objects in the single phase it owns,
-performs its transformation, and advances the phase, and that write is what wakes the next stage.
-This is the same coordination pattern Kubernetes uses internally between the Deployment,
-ReplicaSet, and scheduler controllers.
+The controllers never call one another. Each watches for objects in the single phase it owns, performs its transformation, and advances the phase, and that write is what wakes the next stage. This is the same coordination pattern Kubernetes uses internally between the Deployment, ReplicaSet, and scheduler controllers.
 
-The separation exists so that each stage carries its own concurrency and retry policy. Analysis is
-rate limited and costly and requires long backoff; detection is local and cheap. Combined into one
-reconciler, an analyzer outage would throttle failure detection. Separated, diagnoses queue at
-`Enriched` while detection continues normally.
+The separation exists so that each stage carries its own concurrency and retry policy. Analysis is rate limited and costly and requires long backoff; detection is local and cheap. Combined into one reconciler, an analyzer outage would throttle failure detection. Separated, diagnoses queue at `Enriched` while detection continues normally.
 
 ## The GitOps Loop
 
-In pull request mode the operator never mutates the cluster. It commits the proposed fix to the
-repository that holds the workload manifests and opens a pull request describing the diagnosis.
-A continuous delivery controller applies the change only once a human merges it.
+In pull request mode the operator never mutates the cluster. It commits the proposed fix to the repository that holds the workload manifests and opens a pull request describing the diagnosis. A continuous delivery controller applies the change only once a human merges it.
 
 ```
    +-------------+   detects and     +------------------+
@@ -146,10 +119,7 @@ A continuous delivery controller applies the change only once a human merges it.
              desired state           +------------------+
 ```
 
-This makes every automated change auditable and reversible through version control, at the cost of
-recovery latency that depends on human review. Direct mode skips the loop entirely and patches the
-cluster, which is faster and is the only mode that can produce a true end to end recovery time.
-Both modes are gated by a confidence threshold and an explicit whitelist of permitted actions.
+This makes every automated change auditable and reversible through version control, at the cost of recovery latency that depends on human review. Direct mode skips the loop entirely and patches the cluster, which is faster and is the only mode that can produce a true end to end recovery time. Both modes are gated by a confidence threshold and an explicit whitelist of permitted actions.
 
 ## Design Decisions
 
@@ -181,8 +151,7 @@ Both modes are gated by a confidence threshold and an explicit whitelist of perm
 
 - Repository initialized
 - `Diagnosis` and `HealingPolicy` API schemas, generated as CRDs and installed
-- Failure classification covering eight failure modes, implemented as a pure function with a table
-  driven test suite that requires no cluster
+- Failure classification covering eight failure modes, implemented as a pure function with a table driven test suite that requires no cluster
 - Deterministic failure signatures for deduplication, and DNS safe object naming
 
 ### In Progress
