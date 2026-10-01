@@ -23,13 +23,15 @@ import (
 )
 
 // forbiddenDependencies are packages that could give the agent a way to read or change the cluster,
-// or to reach a credential, without going through the broker. The agent must not depend on any of
-// them, directly or transitively (ADR-017).
+// or to reach a credential, without going through the broker or the injected model. The agent must not depend on any of
+// them, directly or transitively (ADR-017, ADR-018).
 var forbiddenDependencies = []string{
 	"k8s.io/client-go",
 	"sigs.k8s.io/controller-runtime",
 	"github.com/adityax25/KubeCure/internal/tools",
 	"github.com/adityax25/KubeCure/internal/evidence",
+	"github.com/adityax25/KubeCure/internal/model",
+	"google.golang.org/genai",
 	"os/exec",
 }
 
