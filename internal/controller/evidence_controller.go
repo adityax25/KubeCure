@@ -51,7 +51,8 @@ type EvidenceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=core,resources=pods/log,verbs=get
-// +kubebuilder:rbac:groups=core,resources=configmaps;secrets;services;endpoints;nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=configmaps;secrets;services;nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
 func (r *EvidenceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

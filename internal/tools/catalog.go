@@ -204,7 +204,7 @@ func runSimilar(ctx context.Context, b *Broker, arguments json.RawMessage) (stri
 		return list.Items[i].CreationTimestamp.After(list.Items[j].CreationTimestamp.Time)
 	})
 
-	var found []map[string]any
+	found := make([]map[string]any, 0, similarLimit)
 	for i := range list.Items {
 		d := &list.Items[i]
 		if d.Name == b.scope.DiagnosisName || d.Spec.FailureType != failureType {

@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -213,7 +214,7 @@ func (c *Collector) events(ctx context.Context, target Target) (string, error) {
 	}
 
 	sort.Slice(list.Items, func(i, j int) bool {
-		return eventTime(&list.Items[i]).Time.After(eventTime(&list.Items[j]).Time)
+		return eventTime(&list.Items[i]).After(eventTime(&list.Items[j]).Time)
 	})
 
 	var b strings.Builder
@@ -465,8 +466,11 @@ func (c *Collector) configReferences(ctx context.Context, target Target) (string
 }
 
 // serviceEndpoints reports the Services selecting this pod and whether it is a member of their
-// endpoints. A pod that never becomes ready is absent from every endpoint set, which is the
+// ready endpoints. A pod that never becomes ready is excluded from every endpoint set, which is the
 // mechanism by which a probe failure becomes an outage.
+//
+// Membership is read from EndpointSlices. The older Endpoints API is deprecated as of Kubernetes
+// 1.33, and EndpointSlices are what kube-proxy itself consumes.
 func (c *Collector) serviceEndpoints(ctx context.Context, target Target) (string, error) {
 	var services corev1.ServiceList
 	if err := c.Client.List(ctx, &services, client.InNamespace(target.Pod.Namespace)); err != nil {
@@ -474,7 +478,7 @@ func (c *Collector) serviceEndpoints(ctx context.Context, target Target) (string
 	}
 
 	podLabels := labels.Set(target.Pod.Labels)
-	var matched []map[string]any
+	matched := make([]map[string]any, 0, len(services.Items))
 
 	for i := range services.Items {
 		svc := &services.Items[i]
@@ -490,23 +494,28 @@ func (c *Collector) serviceEndpoints(ctx context.Context, target Target) (string
 			"ports":   svc.Spec.Ports,
 		}
 
-		var endpoints corev1.Endpoints
-		key := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
-		if err := c.Client.Get(ctx, key, &endpoints); err == nil {
+		var slices discoveryv1.EndpointSliceList
+		if err := c.Client.List(ctx, &slices,
+			client.InNamespace(svc.Namespace),
+			client.MatchingLabels{discoveryv1.LabelServiceName: svc.Name}); err == nil {
 			ready, notReady := 0, 0
-			podIsReady := false
-			for _, subset := range endpoints.Subsets {
-				ready += len(subset.Addresses)
-				notReady += len(subset.NotReadyAddresses)
-				for _, addr := range subset.Addresses {
-					if addr.TargetRef != nil && addr.TargetRef.Name == target.Pod.Name {
-						podIsReady = true
+			podIsServing := false
+			for j := range slices.Items {
+				for _, ep := range slices.Items[j].Endpoints {
+					isReady := ep.Conditions.Ready != nil && *ep.Conditions.Ready
+					if isReady {
+						ready++
+					} else {
+						notReady++
+					}
+					if isReady && ep.TargetRef != nil && ep.TargetRef.Name == target.Pod.Name {
+						podIsServing = true
 					}
 				}
 			}
 			entry["readyEndpoints"] = ready
 			entry["notReadyEndpoints"] = notReady
-			entry["thisPodIsServing"] = podIsReady
+			entry["thisPodIsServing"] = podIsServing
 		}
 		matched = append(matched, entry)
 	}
@@ -556,7 +565,7 @@ func (c *Collector) nodeStatus(ctx context.Context, target Target) (string, erro
 
 // notableConditions keeps conditions that indicate a problem, plus Ready regardless of value.
 func notableConditions(node *corev1.Node) []map[string]string {
-	var out []map[string]string
+	out := make([]map[string]string, 0, len(node.Status.Conditions))
 	for _, cond := range node.Status.Conditions {
 		interesting := cond.Type == corev1.NodeReady ||
 			(cond.Status == corev1.ConditionTrue && cond.Type != corev1.NodeReady)

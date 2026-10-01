@@ -244,7 +244,7 @@ func (r *PodReconciler) withinRateLimit(ctx context.Context, namespace string, p
 	cutoff := time.Now().Add(-time.Hour)
 	recent := int32(0)
 	for i := range list.Items {
-		if list.Items[i].CreationTimestamp.Time.After(cutoff) {
+		if list.Items[i].CreationTimestamp.After(cutoff) {
 			recent++
 		}
 	}
