@@ -143,6 +143,13 @@ func populateContainerFacts(ev *healingv1alpha1.Evidence, target Target) {
 	}
 }
 
+// Gather fetches a single evidence kind for a target, unredacted and untruncated. It is the shared
+// read path for both baseline collection and the tool broker, so the two can never diverge in what
+// they return for the same request. Callers are responsible for scrubbing the result.
+func (c *Collector) Gather(ctx context.Context, target Target, kind healingv1alpha1.EvidenceKind) (string, error) {
+	return c.gather(ctx, target, kind)
+}
+
 func (c *Collector) gather(ctx context.Context, target Target, kind healingv1alpha1.EvidenceKind) (string, error) {
 	switch kind {
 	case healingv1alpha1.EvidencePreviousLogs:
