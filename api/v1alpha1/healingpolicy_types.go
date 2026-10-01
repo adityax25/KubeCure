@@ -60,10 +60,12 @@ type AgentConfig struct {
 	// +kubebuilder:default=12
 	MaxToolCalls int32 `json:"maxToolCalls,omitempty"`
 
-	// MaxTokens caps model token consumption for a single investigation.
+	// MaxTokens caps model token consumption for a single investigation, summed across every turn.
+	// Each turn resends the conversation so far, so consumption grows faster than the number of
+	// turns, and the default allows for a full investigation rather than a single call.
 	// +optional
 	// +kubebuilder:validation:Minimum=1000
-	// +kubebuilder:default=20000
+	// +kubebuilder:default=100000
 	MaxTokens int32 `json:"maxTokens,omitempty"`
 
 	// MaxCostMicroUSD caps spend per investigation in millionths of a dollar.

@@ -317,10 +317,23 @@ type Investigation struct {
 	// +optional
 	DurationMillis int64 `json:"durationMillis,omitempty"`
 
-	// BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion, which
-	// means the result is a best effort.
+	// BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion. The
+	// investigation then records no hypotheses rather than a guess.
 	// +optional
 	BudgetExhausted bool `json:"budgetExhausted,omitempty"`
+
+	// StopReason explains how the investigation ended, such as a conclusion or a specific budget.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	StopReason string `json:"stopReason,omitempty"`
+
+	// Degraded reports that required evidence could not be obtained, so every confidence was capped.
+	// +optional
+	Degraded bool `json:"degraded,omitempty"`
+
+	// Turns is how many model calls the investigation made, including rejected submissions.
+	// +optional
+	Turns int32 `json:"turns,omitempty"`
 }
 
 // Verdict is the judgement passed on a single hypothesis.

@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -40,6 +41,7 @@ import (
 
 	healingv1alpha1 "github.com/adityax25/KubeCure/api/v1alpha1"
 	"github.com/adityax25/KubeCure/internal/controller"
+	"github.com/adityax25/KubeCure/internal/tools"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -217,6 +219,28 @@ func main() {
 		setupLog.Error(err, "unable to build clientset")
 		os.Exit(1)
 	}
+	model, pricing, err := modelFromEnv(context.Background())
+	if err != nil {
+		setupLog.Error(err, "unable to configure the investigation model")
+		os.Exit(1)
+	}
+	if model == nil {
+		setupLog.Info("no " + envAPIKey + " set; the agent stays disabled and diagnoses wait at Enriched")
+	} else {
+		setupLog.Info("investigation model configured",
+			"model", model.Name(), "costTracked", pricing.InputMicroUSDPerMillion > 0)
+	}
+	if err := (&controller.InvestigatorReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Registry: tools.NewRegistry(mgr.GetClient(), clientset),
+		Model:    model,
+		Pricing:  pricing,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Investigator")
+		os.Exit(1)
+	}
+
 	if err := (&controller.EvidenceReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),

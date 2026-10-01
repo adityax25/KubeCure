@@ -410,8 +410,8 @@ spec:
                     type: boolean
                   budgetExhausted:
                     description: |-
-                      BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion, which
-                      means the result is a best effort.
+                      BudgetExhausted reports that the loop stopped on a limit rather than on a conclusion. The
+                      investigation then records no hypotheses rather than a guess.
                     type: boolean
                   costMicroUSD:
                     description: |-
@@ -419,12 +419,21 @@ spec:
                       point fields.
                     format: int64
                     type: integer
+                  degraded:
+                    description: Degraded reports that required evidence could not
+                      be obtained, so every confidence was capped.
+                    type: boolean
                   durationMillis:
                     format: int64
                     type: integer
                   provider:
                     description: Provider names the analyzer, such as the rule engine
                       or a model backend.
+                    type: string
+                  stopReason:
+                    description: StopReason explains how the investigation ended,
+                      such as a conclusion or a specific budget.
+                    maxLength: 256
                     type: string
                   tokensUsed:
                     format: int32
@@ -455,6 +464,11 @@ spec:
                       - tool
                       type: object
                     type: array
+                  turns:
+                    description: Turns is how many model calls the investigation made,
+                      including rejected submissions.
+                    format: int32
+                    type: integer
                 required:
                 - agentic
                 - provider
